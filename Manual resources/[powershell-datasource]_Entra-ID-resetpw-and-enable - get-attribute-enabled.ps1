@@ -1,6 +1,9 @@
 # Set TLS to accept TLS, TLS 1.1 and TLS 1.2
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls -bor [Net.SecurityProtocolType]::Tls11 -bor [Net.SecurityProtocolType]::Tls12
 
+$verbosePreference = "SilentlyContinue"
+$informationPreference = "Continue"
+
 function Get-MSEntraAccessToken {
     [CmdletBinding()]
     param(
@@ -29,9 +32,9 @@ function Get-MSEntraAccessToken {
 
         # Create a JWT payload
         $payload = [Ordered]@{
-            'iss' = "$EntraAppId"
-            'sub' = "$EntraAppId"
-            'aud' = "https://login.microsoftonline.com/$EntraTenantId/oauth2/token"
+            'iss' = "$entraidappid"
+            'sub' = "$entraidappid"
+            'aud' = "https://login.microsoftonline.com/$EntraIdTenantId/oauth2/token"
             'exp' = ($currentUnixTimestamp + 3600) # Expires in 1 hour
             'nbf' = ($currentUnixTimestamp - 300) # Not before 5 minutes ago
             'iat' = $currentUnixTimestamp
@@ -54,14 +57,14 @@ function Get-MSEntraAccessToken {
 
         $createEntraAccessTokenBody = @{
             grant_type            = 'client_credentials'
-            client_id             = $EntraAppId
+            client_id             = $entraidappid
             client_assertion_type = 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer'
             client_assertion      = $jwtToken
             resource              = 'https://graph.microsoft.com'
         }
 
         $createEntraAccessTokenSplatParams = @{
-            Uri         = "https://login.microsoftonline.com/$EntraTenantId/oauth2/token"
+            Uri         = "https://login.microsoftonline.com/$EntraIdTenantId/oauth2/token"
             Body        = $createEntraAccessTokenBody
             Method      = 'POST'
             ContentType = 'application/x-www-form-urlencoded'
@@ -81,8 +84,8 @@ function Get-MSEntraCertificate {
     [CmdletBinding()]
     param()
     try {
-        $rawCertificate = [system.convert]::FromBase64String($EntraCertificateBase64String)
-        $certificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($rawCertificate, $EntraCertificatePassword, [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::Exportable)
+        $rawCertificate = [system.convert]::FromBase64String($EntraIdCertificateBase64String)
+        $certificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($rawCertificate, $EntraIdCertificatePassword, [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::Exportable)
         Write-Output $certificate
     }
     catch {
@@ -90,14 +93,10 @@ function Get-MSEntraCertificate {
     }
 }
 
-
-
 try {
-    $id = $datasource.selectedUser.Id
-
-    write-verbose -verbose ($ID)
-
-        # Setup Connection with Entra/Exo
+    $userPrincipalName = $datasource.selectedUser.UserPrincipalName
+    
+    # Setup Connection with Entra/Exo
     Write-Verbose 'connecting to MS-Entra'
     $certificate = Get-MSEntraCertificate
     $entraToken = Get-MSEntraAccessToken -Certificate $certificate
@@ -108,28 +107,24 @@ try {
         'Content-Type' = "application/json";
         Accept = "application/json";
     } 
-         
-    Write-Information "Searching for EntraID user Id=$id"
  
-    $properties = @("id","displayName","userPrincipalName", "accountEnabled", "givenName","surname","department","jobTitle","companyName","businessPhones","mobilePhone")
+    $properties = @("accountEnabled")
  
     $baseSearchUri = "https://graph.microsoft.com/"
-    $searchUri = $baseSearchUri + "v1.0/users/$id" + '?$select=' + ($properties -join ",")
+    $searchUri = $baseSearchUri + "v1.0/users/$userPrincipalName" + '?$select=' + ($properties -join ",")
     $entraIDUser = Invoke-RestMethod -Uri $searchUri -Method Get -Headers $authorization -Verbose:$false
+    Write-Information "Finished searching AzureAD user [$userPrincipalName]"
 
-    foreach($tmp in $entraIDUser.psObject.properties)
-    {
-        if($tmp.Name -in $properties){
-            $returnObject = @{
-                name=$tmp.Name;
-                value=$tmp.value
-            }
-            Write-Output $returnObject
-        }
+    $enabled = $entraIDUser.accountEnabled
+     
+    Write-Information "Account enabled: $enabled"
+     
+    $returnObject = [Ordered]@{
+        enabled = $enabled
     }
-   
-    Write-Information "Finished retrieving EntraID user [$id] basic attributes"
+
+    Write-Output $returnObject
 } catch {
     $errorDetailsMessage = ($_.ErrorDetails.Message | ConvertFrom-Json).error.message
-    Write-Error ("Error searching for EntraID user [$id]. Error: $_" + $errorDetailsMessage)
+    Write-Error ("Error searching for Entra ID account status. Error: $_" + $errorDetailsMessage)
 }
