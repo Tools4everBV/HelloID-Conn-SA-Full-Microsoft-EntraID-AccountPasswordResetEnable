@@ -1,9 +1,11 @@
 # Variables configured in form
-$user = $form.gridUsers
-$blnreset = $form.blnreset
-$password = $form.password
-$blnchangenextsignin = $form.blnchangenextsignin
-$blnenable = $form.blnenable
+$searchValue = $datasource.searchValue
+if ($searchValue -eq "*") {
+    $filter = "`$filter=displayName ne null" # Get all users
+}
+else {
+    $filter = "`$search=`"displayName:$searchValue`" OR `"userPrincipalName:$searchValue`" OR `"mail:$searchValue`"&`$filter=accountEnabled eq false"
+}
 
 # Global variables
 # Outcommented as these are set from Global Variables
@@ -11,6 +13,19 @@ $blnenable = $form.blnenable
 # $EntraIdAppId = ""
 # $EntraIdCertificateBase64String = ""
 # $EntraIdCertificatePassword = ""
+
+# Fixed values
+$propertiesToSelect = @(
+    "id",
+    "userPrincipalName",
+    "displayName",
+    "mail",
+    "description",
+    "department",
+    "jobTitle",
+    "companyName",
+    "accountEnabled"
+) # Properties to select from Microsoft Graph API, comma separated
 
 # Enable TLS1.2
 [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor [System.Net.SecurityProtocolType]::Tls12
@@ -127,6 +142,11 @@ function Get-MSEntraAccessToken {
         $signature = $rsa.SignData([Text.Encoding]::UTF8.GetBytes($signatureInput), 'SHA256')
         $base64Signature = [System.Convert]::ToBase64String($signature).Replace('+', '-').Replace('/', '_').Replace('=', '')
 
+        # Ensure the certificate has a private key
+        if (-not $Certificate.HasPrivateKey -or -not $Certificate.PrivateKey) {
+            throw "The certificate does not have a private key."
+        }
+
         # Create the JWT token
         $jwtToken = "$($base64Header).$($base64Payload).$($base64Signature)"
 
@@ -197,48 +217,42 @@ try {
         "ConsistencyLevel" = "eventual" # Needed to filter on specific attributes (https://docs.microsoft.com/en-us/graph/aad-advanced-queries)
     }
 
-    # Update user
-    # API docs: https://learn.microsoft.com/en-us/graph/api/user-update?view=graph-rest-1.0&tabs=http
-    $actionMessage = "updating user [$($user.displayName)] with id [$($user.id)]. Reset password: [$blnreset], Change password at next signin: [$blnchangenextsignin], Account enabled: [$blnenable]"
-
-    if ($blnreset -eq 'true') {
-        $updateUserBody = @{
-            id                = $user.id
-            accountEnabled    = $blnenable
-            passwordProfile   = @{
-                password                      = $password
-                forceChangePasswordNextSignIn = $blnchangenextsignin
-            }
+    # Get Microsoft Entra ID Users
+    # API docs: https://learn.microsoft.com/en-us/graph/api/user-list?view=graph-rest-1.0&tabs=http
+    $actionMessage = "querying Microsoft Entra ID Users matching filter [$filter]"
+    $microsoftEntraIDUsers = [System.Collections.ArrayList]@()
+    do {
+        $getMicrosoftEntraIDUsersSplatParams = @{
+            Uri         = "https://graph.microsoft.com/v1.0/users?$filter&`$select=$($propertiesToSelect -join ',')&`$top=999&`$count=true"
+            Headers     = $headers
+            Method      = "GET"
+            Verbose     = $false
+            ErrorAction = "Stop"
         }
-    }
-    elseif ($blnreset -eq 'false') {   
-        $updateUserBody = @{
-            id                = $user.id
-            accountEnabled    = $blnenable
+        if (-not[string]::IsNullOrEmpty($getMicrosoftEntraIDUsersResponse.'@odata.nextLink')) {
+            $getMicrosoftEntraIDUsersSplatParams["Uri"] = $getMicrosoftEntraIDUsersResponse.'@odata.nextLink'
         }
-    }
+        
+        $getMicrosoftEntraIDUsersResponse = $null
+        $getMicrosoftEntraIDUsersResponse = Invoke-RestMethod @getMicrosoftEntraIDUsersSplatParams
+    
+        # Select only specified properties to limit memory usage
+        $getMicrosoftEntraIDUsersResponse.Value = $getMicrosoftEntraIDUsersResponse.Value | Select-Object $propertiesToSelect
 
-    $updateUserSplatParams = @{
-        Uri         = "https://graph.microsoft.com/v1.0/users/$($user.id)"
-        Headers     = $headers
-        Method      = "PATCH"
-        Body        = ($updateUserBody | ConvertTo-Json -Depth 10)
-        Verbose     = $false
-        ErrorAction = "Stop"
-    }
-    $updateUserResponse = Invoke-RestMethod @updateUserSplatParams
+        if ($getMicrosoftEntraIDUsersResponse.Value -is [array]) {
+            [void]$microsoftEntraIDUsers.AddRange($getMicrosoftEntraIDUsersResponse.Value)
+        }
+        else {
+            [void]$microsoftEntraIDUsers.Add($getMicrosoftEntraIDUsersResponse.Value)
+        }
+    } while (-not[string]::IsNullOrEmpty($getMicrosoftEntraIDUsersResponse.'@odata.nextLink'))
+    Write-Information "Queried Microsoft Entra ID Users matching filter [$filter]. Result count: $(@($microsoftEntraIDUsers).Count)"
 
-    $Log = @{
-        Action            = "UpdateAccount" # optional. ENUM (undefined = default) 
-        System            = "EntraID" # optional (free format text) 
-        Message           = "Updated user [$($user.displayName)] with id [$($user.id)]. Reset password: [$blnreset], Change password at next signin: [$blnchangenextsignin], Account enabled: [$blnenable]" # required (free format text) 
-        IsError           = $false # optional. Elastic reporting purposes only. (default = $false. $true = Executed action returned an error) 
-        TargetDisplayName = $user.displayName # optional (free format text)
-        TargetIdentifier  = $user.id # optional (free format text)
+    # Send results to HelloID
+    $actionMessage = "sending results to HelloID"
+    $microsoftEntraIDUsers | ForEach-Object {
+        Write-Output $_
     }
-    #send result back  
-    Write-Information -Tags "Audit" -MessageData $log
-
 }
 catch {
     $ex = $PSItem
@@ -252,16 +266,7 @@ catch {
         $auditMessage = "Error $($actionMessage). Error: $($ex.Exception.Message)"
         $warningMessage = "Error at Line [$($ex.InvocationInfo.ScriptLineNumber)]: $($ex.InvocationInfo.Line). Error: $($ex.Exception.Message)"
     }
-
-    $Log = @{
-        Action            = "UpdateAccount" # optional. ENUM (undefined = default) 
-        System            = "EntraID" # optional (free format text)
-        Message           = $auditMessage # required (free format text) 
-        IsError           = $true # optional. Elastic reporting purposes only. (default = $false. $true = Executed action returned an error) 
-        TargetDisplayName = $user.displayName # optional (free format text)
-        TargetIdentifier  = $user.id # optional (free format text)
-    }
-    Write-Information -Tags "Audit" -MessageData $log
     Write-Warning $warningMessage
     Write-Error $auditMessage
 }
+  

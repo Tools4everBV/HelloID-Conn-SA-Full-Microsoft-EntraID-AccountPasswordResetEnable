@@ -21,17 +21,15 @@ $tmpName = @'
 EntraIdCertificatePassword
 '@ 
 $tmpValue = @'
-
-'@
+'@ 
 $globalHelloIDVariables.Add([PSCustomObject]@{name = $tmpName; value = $tmpValue; secret = "False"});
 
-#Global variable #2 >> EntraIdAppId
+#Global variable #2 >> EntraIdCertificateBase64String
 $tmpName = @'
-EntraIdAppId
+EntraIdCertificateBase64String
 '@ 
 $tmpValue = @'
-
-'@
+'@ 
 $globalHelloIDVariables.Add([PSCustomObject]@{name = $tmpName; value = $tmpValue; secret = "False"});
 
 #Global variable #3 >> EntraIdTenantId
@@ -39,26 +37,15 @@ $tmpName = @'
 EntraIdTenantId
 '@ 
 $tmpValue = @'
-
-'@
+'@ 
 $globalHelloIDVariables.Add([PSCustomObject]@{name = $tmpName; value = $tmpValue; secret = "False"});
 
-#Global variable #4 >> EntraIdCertificateBase64String
+#Global variable #4 >> EntraIdAppId
 $tmpName = @'
-EntraIdCertificateBase64String
+EntraIdAppId
 '@ 
 $tmpValue = @'
-
-'@
-$globalHelloIDVariables.Add([PSCustomObject]@{name = $tmpName; value = $tmpValue; secret = "False"});
-
-#Global variable #5 >> companyName
-$tmpName = @'
-companyName
 '@ 
-$tmpValue = @'
-
-'@
 $globalHelloIDVariables.Add([PSCustomObject]@{name = $tmpName; value = $tmpValue; secret = "False"});
 
 
@@ -359,15 +346,109 @@ foreach ($item in $globalHelloIDVariables) {
 
 
 <# Begin: HelloID Data sources #>
-<# Begin: DataSource "Entra-ID-resetpw-and-enable | generate-table-wildcard" #>
+<# Begin: DataSource "entra-id-account-reset-password-unlock | EntraID-Get-Users-Wildcard-DisplayName-UPN-Mail" #>
 $tmpPsScript = @'
-# Set TLS to accept TLS, TLS 1.1 and TLS 1.2
-[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls -bor [Net.SecurityProtocolType]::Tls11 -bor [Net.SecurityProtocolType]::Tls12
+# Variables configured in form
+$searchValue = $datasource.searchValue
+if ($searchValue -eq "*") {
+    $filter = "`$filter=displayName ne null" # Get all users
+}
+else {
+    $filter = "`$search=`"displayName:$searchValue`" OR `"userPrincipalName:$searchValue`" OR `"mail:$searchValue`"&`$filter=accountEnabled eq false"
+}
+
+# Global variables
+# Outcommented as these are set from Global Variables
+# $EntraIdTenantId = ""
+# $EntraIdAppId = ""
+# $EntraIdCertificateBase64String = ""
+# $EntraIdCertificatePassword = ""
+
+# Fixed values
+$propertiesToSelect = @(
+    "id",
+    "userPrincipalName",
+    "displayName",
+    "mail",
+    "description",
+    "department",
+    "jobTitle",
+    "companyName",
+    "accountEnabled"
+) # Properties to select from Microsoft Graph API, comma separated
+
+# Enable TLS1.2
+[System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor [System.Net.SecurityProtocolType]::Tls12
+
+# Set debug logging
+$VerbosePreference = "SilentlyContinue"
+$InformationPreference = "Continue"
+$WarningPreference = "Continue"
+
+#region functions
+function Resolve-MicrosoftGraphAPIError {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory)]
+        [object]
+        $ErrorObject
+    )
+    process {
+        $httpErrorObj = [PSCustomObject]@{
+            ScriptLineNumber = $ErrorObject.InvocationInfo.ScriptLineNumber
+            Line             = $ErrorObject.InvocationInfo.Line
+            ErrorDetails     = $ErrorObject.Exception.Message
+            FriendlyMessage  = $ErrorObject.Exception.Message
+        }
+        if (-not [string]::IsNullOrEmpty($ErrorObject.ErrorDetails.Message)) {
+            $httpErrorObj.ErrorDetails = $ErrorObject.ErrorDetails.Message
+        }
+        elseif ($ErrorObject.Exception.GetType().FullName -eq 'System.Net.WebException') {
+            if ($null -ne $ErrorObject.Exception.Response) {
+                $streamReaderResponse = [System.IO.StreamReader]::new($ErrorObject.Exception.Response.GetResponseStream()).ReadToEnd()
+                if (-not [string]::IsNullOrEmpty($streamReaderResponse)) {
+                    $httpErrorObj.ErrorDetails = $streamReaderResponse
+                }
+            }
+        }
+        try {
+            $errorDetailsObject = ($httpErrorObj.ErrorDetails | ConvertFrom-Json -ErrorAction Stop)
+            if ($errorDetailsObject.error_description) {
+                $httpErrorObj.FriendlyMessage = $errorDetailsObject.error_description
+            }
+            elseif ($errorDetailsObject.error.message) {
+                $httpErrorObj.FriendlyMessage = "$($errorDetailsObject.error.code): $($errorDetailsObject.error.message)"
+            }
+            elseif ($errorDetailsObject.error.details.message) {
+                $httpErrorObj.FriendlyMessage = "$($errorDetailsObject.error.details.code): $($errorDetailsObject.error.details.message)"
+            }
+            else {
+                $httpErrorObj.FriendlyMessage = $httpErrorObj.ErrorDetails
+            }
+        }
+        catch {
+            $httpErrorObj.FriendlyMessage = $httpErrorObj.ErrorDetails
+        }
+        Write-Output $httpErrorObj
+    }
+}
+
 function Get-MSEntraAccessToken {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)]
-        $Certificate
+        [ValidateNotNull()]
+        $Certificate,
+        
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string]
+        $AppId,
+        
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string]
+        $TenantId
     )
     try {
         # Get the DER encoded bytes of the certificate
@@ -391,9 +472,9 @@ function Get-MSEntraAccessToken {
 
         # Create a JWT payload
         $payload = [Ordered]@{
-            'iss' = "$entraidappid"
-            'sub' = "$entraidappid"
-            'aud' = "https://login.microsoftonline.com/$EntraIdTenantId/oauth2/token"
+            'iss' = "$($AppId)"
+            'sub' = "$($AppId)"
+            'aud' = "https://login.microsoftonline.com/$($TenantId)/oauth2/token"
             'exp' = ($currentUnixTimestamp + 3600) # Expires in 1 hour
             'nbf' = ($currentUnixTimestamp - 300) # Not before 5 minutes ago
             'iat' = $currentUnixTimestamp
@@ -411,19 +492,24 @@ function Get-MSEntraAccessToken {
         $signature = $rsa.SignData([Text.Encoding]::UTF8.GetBytes($signatureInput), 'SHA256')
         $base64Signature = [System.Convert]::ToBase64String($signature).Replace('+', '-').Replace('/', '_').Replace('=', '')
 
+        # Ensure the certificate has a private key
+        if (-not $Certificate.HasPrivateKey -or -not $Certificate.PrivateKey) {
+            throw "The certificate does not have a private key."
+        }
+
         # Create the JWT token
         $jwtToken = "$($base64Header).$($base64Payload).$($base64Signature)"
 
         $createEntraAccessTokenBody = @{
             grant_type            = 'client_credentials'
-            client_id             = $entraidappid
+            client_id             = $AppId
             client_assertion_type = 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer'
             client_assertion      = $jwtToken
             resource              = 'https://graph.microsoft.com'
         }
 
         $createEntraAccessTokenSplatParams = @{
-            Uri         = "https://login.microsoftonline.com/$EntraIdTenantId/oauth2/token"
+            Uri         = "https://login.microsoftonline.com/$($TenantId)/oauth2/token"
             Body        = $createEntraAccessTokenBody
             Method      = 'POST'
             ContentType = 'application/x-www-form-urlencoded'
@@ -441,250 +527,202 @@ function Get-MSEntraAccessToken {
 
 function Get-MSEntraCertificate {
     [CmdletBinding()]
-    param()
+    param(
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string]
+        $CertificateBase64String,
+        
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string]
+        $CertificatePassword
+    )
     try {
-        $rawCertificate = [system.convert]::FromBase64String($EntraIdCertificateBase64String)
-        $certificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($rawCertificate, $EntraIdCertificatePassword, [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::Exportable)
+        $rawCertificate = [system.convert]::FromBase64String($CertificateBase64String)
+        $certificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($rawCertificate, $CertificatePassword, [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::Exportable)
         Write-Output $certificate
     }
     catch {
         $PSCmdlet.ThrowTerminatingError($_)
     }
 }
+#endregion functions
 
 try {
-    $searchValue = $datasource.searchUser
-    $searchQuery = "*$searchValue*"
-          
-    # Setup Connection with Entra/Exo
-    Write-Verbose 'connecting to MS-Entra'
-    $certificate = Get-MSEntraCertificate
-    $entraToken = Get-MSEntraAccessToken -Certificate $certificate
-    
-    #Add the authorization header to the request
-    $authorization = @{
-        Authorization = "Bearer $entraToken";
-        'Content-Type' = "application/json";
-        Accept = "application/json";
-    } 
+    # Convert base64 certificate string to certificate object
+    $actionMessage = "converting base64 certificate string to certificate object"
+    $certificate = Get-MSEntraCertificate -CertificateBase64String $EntraIdCertificateBase64String -CertificatePassword $EntraIdCertificatePassword
 
-    $baseSearchUri = "https://graph.microsoft.com/"
-    $searchUri = $baseSearchUri + "v1.0/users" + '?$select=Id,UserPrincipalName,displayName,department,jobTitle,usertype,companyName,accountEnabled' + '&$top=999'
+    # Create access token
+    $actionMessage = "creating access token"
+    $entraToken = Get-MSEntraAccessToken -Certificate $certificate -AppId $EntraIdAppId -TenantId $EntraIdTenantId
 
-    $entraidUsersResponse = Invoke-RestMethod -Uri $searchUri -Method Get -Headers $authorization -Verbose:$false
-    $entraidUsers = $entraidUsersResponse.value
-    while (![string]::IsNullOrEmpty($entraidUsersResponse.'@odata.nextLink')) {
-        $entraidUsersResponse = Invoke-RestMethod -Uri $entraidUsersResponse.'@odata.nextLink' -Method Get -Headers $authorization -Verbose:$false
-        $entraidUsers += $entraidUsersResponse.value
-    }  
-
-    $users = foreach($entraidUser in $entraidUsers){
-        if($entraidUser.userType -ne "Guest" -and
-        ($entraidUser.displayName -like $searchQuery -or $entraidUser.userPrincipalName -like $searchQuery)){
-            $entraidUser
-        }
+    # Create headers
+    $actionMessage = "creating headers"
+    $headers = @{
+        "Authorization"    = "Bearer $($entraToken)"
+        "Accept"           = "application/json"
+        "Content-Type"     = "application/json"
+        "ConsistencyLevel" = "eventual" # Needed to filter on specific attributes (https://docs.microsoft.com/en-us/graph/aad-advanced-queries)
     }
-    $users = $users | Sort-Object -Property DisplayName
-    $resultCount = @($users).Count
-    Write-Information "Result count: $resultCount"
+
+    # Get Microsoft Entra ID Users
+    # API docs: https://learn.microsoft.com/en-us/graph/api/user-list?view=graph-rest-1.0&tabs=http
+    $actionMessage = "querying Microsoft Entra ID Users matching filter [$filter]"
+    $microsoftEntraIDUsers = [System.Collections.ArrayList]@()
+    do {
+        $getMicrosoftEntraIDUsersSplatParams = @{
+            Uri         = "https://graph.microsoft.com/v1.0/users?$filter&`$select=$($propertiesToSelect -join ',')&`$top=999&`$count=true"
+            Headers     = $headers
+            Method      = "GET"
+            Verbose     = $false
+            ErrorAction = "Stop"
+        }
+        if (-not[string]::IsNullOrEmpty($getMicrosoftEntraIDUsersResponse.'@odata.nextLink')) {
+            $getMicrosoftEntraIDUsersSplatParams["Uri"] = $getMicrosoftEntraIDUsersResponse.'@odata.nextLink'
+        }
         
-    if($resultCount -gt 0){
-        foreach($user in $users){
-            $returnObject = @{
-                Id=$user.Id;
-                UserPrincipalName=$user.UserPrincipalName;
-                DisplayName=$user.DisplayName;
-                Department=$user.Department;
-                Title=$user.JobTitle;
-                Company=$user.CompanyName
-                Enabled=$user.accountEnabled
-            }
-            Write-Output $returnObject
+        $getMicrosoftEntraIDUsersResponse = $null
+        $getMicrosoftEntraIDUsersResponse = Invoke-RestMethod @getMicrosoftEntraIDUsersSplatParams
+    
+        # Select only specified properties to limit memory usage
+        $getMicrosoftEntraIDUsersResponse.Value = $getMicrosoftEntraIDUsersResponse.Value | Select-Object $propertiesToSelect
+
+        if ($getMicrosoftEntraIDUsersResponse.Value -is [array]) {
+            [void]$microsoftEntraIDUsers.AddRange($getMicrosoftEntraIDUsersResponse.Value)
         }
+        else {
+            [void]$microsoftEntraIDUsers.Add($getMicrosoftEntraIDUsersResponse.Value)
+        }
+    } while (-not[string]::IsNullOrEmpty($getMicrosoftEntraIDUsersResponse.'@odata.nextLink'))
+    Write-Information "Queried Microsoft Entra ID Users matching filter [$filter]. Result count: $(@($microsoftEntraIDUsers).Count)"
+
+    # Send results to HelloID
+    $actionMessage = "sending results to HelloID"
+    $microsoftEntraIDUsers | ForEach-Object {
+        Write-Output $_
     }
-} catch {
-    $errorDetailsMessage = ($_.ErrorDetails.Message | ConvertFrom-Json).error.message
-    Write-Error ("Error searching for EntraID users. Error: $_" + $errorDetailsMessage)
+}
+catch {
+    $ex = $PSItem
+    if ($($ex.Exception.GetType().FullName -eq 'Microsoft.PowerShell.Commands.HttpResponseException') -or
+        $($ex.Exception.GetType().FullName -eq 'System.Net.WebException')) {
+        $errorObj = Resolve-MicrosoftGraphAPIError -ErrorObject $ex
+        $auditMessage = "Error $($actionMessage). Error: $($errorObj.FriendlyMessage)"
+        $warningMessage = "Error at Line [$($errorObj.ScriptLineNumber)]: $($errorObj.Line). Error: $($errorObj.ErrorDetails)"
+    }
+    else {
+        $auditMessage = "Error $($actionMessage). Error: $($ex.Exception.Message)"
+        $warningMessage = "Error at Line [$($ex.InvocationInfo.ScriptLineNumber)]: $($ex.InvocationInfo.Line). Error: $($ex.Exception.Message)"
+    }
+    Write-Warning $warningMessage
+    Write-Error $auditMessage
 }
   
 '@ 
 $tmpModel = @'
-[{"key":"Company","type":0},{"key":"Id","type":0},{"key":"DisplayName","type":0},{"key":"Title","type":0},{"key":"Enabled","type":0},{"key":"Department","type":0},{"key":"UserPrincipalName","type":0}]
+[{"key":"id","type":0},{"key":"userPrincipalName","type":0},{"key":"displayName","type":0},{"key":"mail","type":0},{"key":"description","type":0},{"key":"department","type":0},{"key":"jobTitle","type":0},{"key":"companyName","type":0},{"key":"accountEnabled","type":0}]
 '@ 
 $tmpInput = @'
-[{"description":"","translateDescription":false,"inputFieldType":1,"key":"searchUser","type":0,"options":1}]
+[{"description":"","translateDescription":false,"inputFieldType":1,"key":"searchValue","type":0,"options":1}]
 '@ 
 $dataSourceGuid_0 = [PSCustomObject]@{} 
 $dataSourceGuid_0_Name = @'
-Entra-ID-resetpw-and-enable | generate-table-wildcard
+entra-id-account-reset-password-unlock | EntraID-Get-Users-Wildcard-DisplayName-UPN-Mail
 '@ 
 Invoke-HelloIDDatasource -DatasourceName $dataSourceGuid_0_Name -DatasourceType "4" -DatasourceInput $tmpInput -DatasourcePsScript $tmpPsScript -DatasourceModel $tmpModel -DataSourceRunInCloud "True" -returnObject ([Ref]$dataSourceGuid_0) 
-<# End: DataSource "Entra-ID-resetpw-and-enable | generate-table-wildcard" #>
+<# End: DataSource "entra-id-account-reset-password-unlock | EntraID-Get-Users-Wildcard-DisplayName-UPN-Mail" #>
 
-<# Begin: DataSource "Entra-ID-resetpw-and-enable | generate-table-attributes-basic" #>
+<# Begin: DataSource "entra-id-account-reset-password-unlock | Entra-ID-Get-User-Attribute-AccountEnabled" #>
 $tmpPsScript = @'
-# Set TLS to accept TLS, TLS 1.1 and TLS 1.2
-[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls -bor [Net.SecurityProtocolType]::Tls11 -bor [Net.SecurityProtocolType]::Tls12
+# Variables configured in form
+$user = $datasource.selectedUser
 
-function Get-MSEntraAccessToken {
+# Global variables
+# Outcommented as these are set from Global Variables
+# $EntraIdTenantId = ""
+# $EntraIdAppId = ""
+# $EntraIdCertificateBase64String = ""
+# $EntraIdCertificatePassword = ""
+
+# Fixed values
+$propertiesToSelect = @(
+    "accountEnabled"
+) # Properties to select from Microsoft Graph API, comma separated
+
+# Enable TLS1.2
+[System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor [System.Net.SecurityProtocolType]::Tls12
+
+# Set debug logging
+$VerbosePreference = "SilentlyContinue"
+$InformationPreference = "Continue"
+$WarningPreference = "Continue"
+
+#region functions
+function Resolve-MicrosoftGraphAPIError {
     [CmdletBinding()]
-    param(
+    param (
         [Parameter(Mandatory)]
-        $Certificate
+        [object]
+        $ErrorObject
     )
-    try {
-        # Get the DER encoded bytes of the certificate
-        $derBytes = $Certificate.RawData
-
-        # Compute the SHA-256 hash of the DER encoded bytes
-        $sha256 = [System.Security.Cryptography.SHA256]::Create()
-        $hashBytes = $sha256.ComputeHash($derBytes)
-        $base64Thumbprint = [System.Convert]::ToBase64String($hashBytes).Replace('+', '-').Replace('/', '_').Replace('=', '')
-
-        # Create a JWT (JSON Web Token) header
-        $header = @{
-            'alg'      = 'RS256'
-            'typ'      = 'JWT'
-            'x5t#S256' = $base64Thumbprint
-        } | ConvertTo-Json
-        $base64Header = [System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($header))
-
-        # Calculate the Unix timestamp (seconds since 1970-01-01T00:00:00Z) for 'exp', 'nbf' and 'iat'
-        $currentUnixTimestamp = [math]::Round(((Get-Date).ToUniversalTime() - ([datetime]'1970-01-01T00:00:00Z').ToUniversalTime()).TotalSeconds)
-
-        # Create a JWT payload
-        $payload = [Ordered]@{
-            'iss' = "$entraidappid"
-            'sub' = "$entraidappid"
-            'aud' = "https://login.microsoftonline.com/$EntraIdTenantId/oauth2/token"
-            'exp' = ($currentUnixTimestamp + 3600) # Expires in 1 hour
-            'nbf' = ($currentUnixTimestamp - 300) # Not before 5 minutes ago
-            'iat' = $currentUnixTimestamp
-            'jti' = [Guid]::NewGuid().ToString()
-        } | ConvertTo-Json
-        $base64Payload = [System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($payload)).Replace('+', '-').Replace('/', '_').Replace('=', '')
-
-        # Extract the private key from the certificate
-        $rsaPrivate = $Certificate.PrivateKey
-        $rsa = [System.Security.Cryptography.RSACryptoServiceProvider]::new()
-        $rsa.ImportParameters($rsaPrivate.ExportParameters($true))
-
-        # Sign the JWT
-        $signatureInput = "$base64Header.$base64Payload"
-        $signature = $rsa.SignData([Text.Encoding]::UTF8.GetBytes($signatureInput), 'SHA256')
-        $base64Signature = [System.Convert]::ToBase64String($signature).Replace('+', '-').Replace('/', '_').Replace('=', '')
-
-        # Create the JWT token
-        $jwtToken = "$($base64Header).$($base64Payload).$($base64Signature)"
-
-        $createEntraAccessTokenBody = @{
-            grant_type            = 'client_credentials'
-            client_id             = $entraidappid
-            client_assertion_type = 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer'
-            client_assertion      = $jwtToken
-            resource              = 'https://graph.microsoft.com'
+    process {
+        $httpErrorObj = [PSCustomObject]@{
+            ScriptLineNumber = $ErrorObject.InvocationInfo.ScriptLineNumber
+            Line             = $ErrorObject.InvocationInfo.Line
+            ErrorDetails     = $ErrorObject.Exception.Message
+            FriendlyMessage  = $ErrorObject.Exception.Message
         }
-
-        $createEntraAccessTokenSplatParams = @{
-            Uri         = "https://login.microsoftonline.com/$EntraIdTenantId/oauth2/token"
-            Body        = $createEntraAccessTokenBody
-            Method      = 'POST'
-            ContentType = 'application/x-www-form-urlencoded'
-            Verbose     = $false
-            ErrorAction = 'Stop'
+        if (-not [string]::IsNullOrEmpty($ErrorObject.ErrorDetails.Message)) {
+            $httpErrorObj.ErrorDetails = $ErrorObject.ErrorDetails.Message
         }
-
-        $createEntraAccessTokenResponse = Invoke-RestMethod @createEntraAccessTokenSplatParams
-        Write-Output $createEntraAccessTokenResponse.access_token
-    }
-    catch {
-        $PSCmdlet.ThrowTerminatingError($_)
-    }
-}
-
-function Get-MSEntraCertificate {
-    [CmdletBinding()]
-    param()
-    try {
-        $rawCertificate = [system.convert]::FromBase64String($EntraIdCertificateBase64String)
-        $certificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($rawCertificate, $EntraIdCertificatePassword, [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::Exportable)
-        Write-Output $certificate
-    }
-    catch {
-        $PSCmdlet.ThrowTerminatingError($_)
-    }
-}
-
-
-
-try {
-    $id = $datasource.selectedUser.Id
-
-    write-verbose -verbose ($ID)
-
-        # Setup Connection with Entra/Exo
-    Write-Verbose 'connecting to MS-Entra'
-    $certificate = Get-MSEntraCertificate
-    $entraToken = Get-MSEntraAccessToken -Certificate $certificate
-    
-    #Add the authorization header to the request
-    $authorization = @{
-        Authorization = "Bearer $entraToken";
-        'Content-Type' = "application/json";
-        Accept = "application/json";
-    } 
-         
-    Write-Information "Searching for EntraID user Id=$id"
- 
-    $properties = @("id","displayName","userPrincipalName", "accountEnabled", "givenName","surname","department","jobTitle","companyName","businessPhones","mobilePhone")
- 
-    $baseSearchUri = "https://graph.microsoft.com/"
-    $searchUri = $baseSearchUri + "v1.0/users/$id" + '?$select=' + ($properties -join ",")
-    $entraIDUser = Invoke-RestMethod -Uri $searchUri -Method Get -Headers $authorization -Verbose:$false
-
-    foreach($tmp in $entraIDUser.psObject.properties)
-    {
-        if($tmp.Name -in $properties){
-            $returnObject = @{
-                name=$tmp.Name;
-                value=$tmp.value
+        elseif ($ErrorObject.Exception.GetType().FullName -eq 'System.Net.WebException') {
+            if ($null -ne $ErrorObject.Exception.Response) {
+                $streamReaderResponse = [System.IO.StreamReader]::new($ErrorObject.Exception.Response.GetResponseStream()).ReadToEnd()
+                if (-not [string]::IsNullOrEmpty($streamReaderResponse)) {
+                    $httpErrorObj.ErrorDetails = $streamReaderResponse
+                }
             }
-            Write-Output $returnObject
         }
+        try {
+            $errorDetailsObject = ($httpErrorObj.ErrorDetails | ConvertFrom-Json -ErrorAction Stop)
+            if ($errorDetailsObject.error_description) {
+                $httpErrorObj.FriendlyMessage = $errorDetailsObject.error_description
+            }
+            elseif ($errorDetailsObject.error.message) {
+                $httpErrorObj.FriendlyMessage = "$($errorDetailsObject.error.code): $($errorDetailsObject.error.message)"
+            }
+            elseif ($errorDetailsObject.error.details.message) {
+                $httpErrorObj.FriendlyMessage = "$($errorDetailsObject.error.details.code): $($errorDetailsObject.error.details.message)"
+            }
+            else {
+                $httpErrorObj.FriendlyMessage = $httpErrorObj.ErrorDetails
+            }
+        }
+        catch {
+            $httpErrorObj.FriendlyMessage = $httpErrorObj.ErrorDetails
+        }
+        Write-Output $httpErrorObj
     }
-   
-    Write-Information "Finished retrieving EntraID user [$id] basic attributes"
-} catch {
-    $errorDetailsMessage = ($_.ErrorDetails.Message | ConvertFrom-Json).error.message
-    Write-Error ("Error searching for EntraID user [$id]. Error: $_" + $errorDetailsMessage)
 }
-'@ 
-$tmpModel = @'
-[{"key":"name","type":0},{"key":"value","type":0}]
-'@ 
-$tmpInput = @'
-[{"description":"","translateDescription":false,"inputFieldType":1,"key":"selectedUser","type":0,"options":1}]
-'@ 
-$dataSourceGuid_1 = [PSCustomObject]@{} 
-$dataSourceGuid_1_Name = @'
-Entra-ID-resetpw-and-enable | generate-table-attributes-basic
-'@ 
-Invoke-HelloIDDatasource -DatasourceName $dataSourceGuid_1_Name -DatasourceType "4" -DatasourceInput $tmpInput -DatasourcePsScript $tmpPsScript -DatasourceModel $tmpModel -DataSourceRunInCloud "True" -returnObject ([Ref]$dataSourceGuid_1) 
-<# End: DataSource "Entra-ID-resetpw-and-enable | generate-table-attributes-basic" #>
-
-<# Begin: DataSource "Entra-ID-resetpw-and-enable | get-attribute-enabled" #>
-$tmpPsScript = @'
-# Set TLS to accept TLS, TLS 1.1 and TLS 1.2
-[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls -bor [Net.SecurityProtocolType]::Tls11 -bor [Net.SecurityProtocolType]::Tls12
-
-$verbosePreference = "SilentlyContinue"
-$informationPreference = "Continue"
 
 function Get-MSEntraAccessToken {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)]
-        $Certificate
+        [ValidateNotNull()]
+        $Certificate,
+        
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string]
+        $AppId,
+        
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string]
+        $TenantId
     )
     try {
         # Get the DER encoded bytes of the certificate
@@ -708,9 +746,9 @@ function Get-MSEntraAccessToken {
 
         # Create a JWT payload
         $payload = [Ordered]@{
-            'iss' = "$entraidappid"
-            'sub' = "$entraidappid"
-            'aud' = "https://login.microsoftonline.com/$EntraIdTenantId/oauth2/token"
+            'iss' = "$($AppId)"
+            'sub' = "$($AppId)"
+            'aud' = "https://login.microsoftonline.com/$($TenantId)/oauth2/token"
             'exp' = ($currentUnixTimestamp + 3600) # Expires in 1 hour
             'nbf' = ($currentUnixTimestamp - 300) # Not before 5 minutes ago
             'iat' = $currentUnixTimestamp
@@ -728,19 +766,24 @@ function Get-MSEntraAccessToken {
         $signature = $rsa.SignData([Text.Encoding]::UTF8.GetBytes($signatureInput), 'SHA256')
         $base64Signature = [System.Convert]::ToBase64String($signature).Replace('+', '-').Replace('/', '_').Replace('=', '')
 
+        # Ensure the certificate has a private key
+        if (-not $Certificate.HasPrivateKey -or -not $Certificate.PrivateKey) {
+            throw "The certificate does not have a private key."
+        }
+
         # Create the JWT token
         $jwtToken = "$($base64Header).$($base64Payload).$($base64Signature)"
 
         $createEntraAccessTokenBody = @{
             grant_type            = 'client_credentials'
-            client_id             = $entraidappid
+            client_id             = $AppId
             client_assertion_type = 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer'
             client_assertion      = $jwtToken
             resource              = 'https://graph.microsoft.com'
         }
 
         $createEntraAccessTokenSplatParams = @{
-            Uri         = "https://login.microsoftonline.com/$EntraIdTenantId/oauth2/token"
+            Uri         = "https://login.microsoftonline.com/$($TenantId)/oauth2/token"
             Body        = $createEntraAccessTokenBody
             Method      = 'POST'
             ContentType = 'application/x-www-form-urlencoded'
@@ -758,70 +801,298 @@ function Get-MSEntraAccessToken {
 
 function Get-MSEntraCertificate {
     [CmdletBinding()]
-    param()
+    param(
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string]
+        $CertificateBase64String,
+        
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string]
+        $CertificatePassword
+    )
     try {
-        $rawCertificate = [system.convert]::FromBase64String($EntraIdCertificateBase64String)
-        $certificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($rawCertificate, $EntraIdCertificatePassword, [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::Exportable)
+        $rawCertificate = [system.convert]::FromBase64String($CertificateBase64String)
+        $certificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($rawCertificate, $CertificatePassword, [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::Exportable)
         Write-Output $certificate
     }
     catch {
         $PSCmdlet.ThrowTerminatingError($_)
     }
 }
+#endregion functions
 
 try {
-    $userPrincipalName = $datasource.selectedUser.UserPrincipalName
-    
-    # Setup Connection with Entra/Exo
-    Write-Verbose 'connecting to MS-Entra'
-    $certificate = Get-MSEntraCertificate
-    $entraToken = Get-MSEntraAccessToken -Certificate $certificate
-    
-    #Add the authorization header to the request
-    $authorization = @{
-        Authorization = "Bearer $entraToken";
-        'Content-Type' = "application/json";
-        Accept = "application/json";
-    } 
- 
-    $properties = @("accountEnabled")
- 
-    $baseSearchUri = "https://graph.microsoft.com/"
-    $searchUri = $baseSearchUri + "v1.0/users/$userPrincipalName" + '?$select=' + ($properties -join ",")
-    $entraIDUser = Invoke-RestMethod -Uri $searchUri -Method Get -Headers $authorization -Verbose:$false
-    Write-Information "Finished searching AzureAD user [$userPrincipalName]"
+    # Convert base64 certificate string to certificate object
+    $actionMessage = "converting base64 certificate string to certificate object"
+    $certificate = Get-MSEntraCertificate -CertificateBase64String $EntraIdCertificateBase64String -CertificatePassword $EntraIdCertificatePassword
 
-    $enabled = $entraIDUser.accountEnabled
-     
-    Write-Information "Account enabled: $enabled"
-     
-    $returnObject = [Ordered]@{
-        enabled = $enabled
+    # Create access token
+    $actionMessage = "creating access token"
+    $entraToken = Get-MSEntraAccessToken -Certificate $certificate -AppId $EntraIdAppId -TenantId $EntraIdTenantId
+
+    # Create headers
+    $actionMessage = "creating headers"
+    $headers = @{
+        "Authorization"    = "Bearer $($entraToken)"
+        "Accept"           = "application/json"
+        "Content-Type"     = "application/json"
+        "ConsistencyLevel" = "eventual" # Needed to filter on specific attributes (https://docs.microsoft.com/en-us/graph/aad-advanced-queries)
     }
 
-    Write-Output $returnObject
-} catch {
-    $errorDetailsMessage = ($_.ErrorDetails.Message | ConvertFrom-Json).error.message
-    Write-Error ("Error searching for Entra ID account status. Error: $_" + $errorDetailsMessage)
+    # Get Microsoft Entra ID User
+    # API docs: https://learn.microsoft.com/en-us/graph/api/user-list?view=graph-rest-1.0&tabs=http
+    $actionMessage = "querying Microsoft Entra ID User with id [$user.id]"
+
+    $getMicrosoftEntraIDUserSplatParams = @{
+        Uri         = "https://graph.microsoft.com/v1.0/users/$($user.id)?`$select=$($propertiesToSelect -join ',')&`$top=999&`$count=true"
+        Headers     = $headers
+        Method      = "GET"
+        Verbose     = $false
+        ErrorAction = "Stop"
+    }
+        
+    $getMicrosoftEntraIDUserResponse = $null
+    $getMicrosoftEntraIDUserResponse = Invoke-RestMethod @getMicrosoftEntraIDUserSplatParams
+
+    # Select only specified properties to limit memory usage
+    $microsoftEntraIDUser = $getMicrosoftEntraIDUserResponse | Select-Object $propertiesToSelect
+
+    Write-Information "Queried Microsoft Entra ID User with id [$($user.id)]. Result count: $(@($microsoftEntraIDUser).Count)"
+
+    # Send results to HelloID
+    $actionMessage = "sending results to HelloID"
+    $microsoftEntraIDUser | ForEach-Object {
+        Write-Output $_
+    }
+}
+catch {
+    $ex = $PSItem
+    if ($($ex.Exception.GetType().FullName -eq 'Microsoft.PowerShell.Commands.HttpResponseException') -or
+        $($ex.Exception.GetType().FullName -eq 'System.Net.WebException')) {
+        $errorObj = Resolve-MicrosoftGraphAPIError -ErrorObject $ex
+        $auditMessage = "Error $($actionMessage). Error: $($errorObj.FriendlyMessage)"
+        $warningMessage = "Error at Line [$($errorObj.ScriptLineNumber)]: $($errorObj.Line). Error: $($errorObj.ErrorDetails)"
+    }
+    else {
+        $auditMessage = "Error $($actionMessage). Error: $($ex.Exception.Message)"
+        $warningMessage = "Error at Line [$($ex.InvocationInfo.ScriptLineNumber)]: $($ex.InvocationInfo.Line). Error: $($ex.Exception.Message)"
+    }
+    Write-Warning $warningMessage
+    Write-Error $auditMessage
 }
 '@ 
 $tmpModel = @'
-[{"key":"enabled","type":0}]
+[{"key":"accountEnabled","type":0}]
 '@ 
 $tmpInput = @'
 [{"description":null,"translateDescription":false,"inputFieldType":1,"key":"selectedUser","type":0,"options":1}]
 '@ 
 $dataSourceGuid_2 = [PSCustomObject]@{} 
 $dataSourceGuid_2_Name = @'
-Entra-ID-resetpw-and-enable | get-attribute-enabled
+entra-id-account-reset-password-unlock | Entra-ID-Get-User-Attribute-AccountEnabled
 '@ 
 Invoke-HelloIDDatasource -DatasourceName $dataSourceGuid_2_Name -DatasourceType "4" -DatasourceInput $tmpInput -DatasourcePsScript $tmpPsScript -DatasourceModel $tmpModel -DataSourceRunInCloud "True" -returnObject ([Ref]$dataSourceGuid_2) 
-<# End: DataSource "Entra-ID-resetpw-and-enable | get-attribute-enabled" #>
+<# End: DataSource "entra-id-account-reset-password-unlock | Entra-ID-Get-User-Attribute-AccountEnabled" #>
+
+<# Begin: DataSource "entra-id-account-reset-password-unlock | Generate-Random-Password" #>
+$tmpPsScript = @'
+function New-GeneratedPassword {
+    <#
+    .SYNOPSIS
+        This will generate a simple random password like "f6Tk9aqatc$x" and optionally include numbers and/or special characters
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        $MinimumLength = 12,
+    
+        [Parameter(Mandatory = $false)]
+        $MaximumLength = 16,
+    
+        [Parameter(Mandatory = $false)]
+        $MinimumUpperCaseLetters = 1,
+    
+        [Parameter(Mandatory = $false)]
+        $MaximumUpperCaseLetters = 2,
+    
+        [Parameter(Mandatory = $false)]
+        $MinimumDigits = 2,
+    
+        [Parameter(Mandatory = $false)]
+        $MaximumDigits = 3,
+                    
+        [Parameter(Mandatory = $false)]
+        $MinimumSpecialChars = 1,
+    
+        [Parameter(Mandatory = $false)]
+        $MaximumSpecialChars = 2,
+            
+        [Parameter(Mandatory = $false)]
+        $AllowedLowerCaseLetters = 'abcdefghjkmnpqrstuvwxyz',
+    
+        [Parameter(Mandatory = $false)]
+        $AllowedUpperCaseLetters = 'ABCDEFGHJKMNPQRSTUVWXYZ',
+            
+        [Parameter(Mandatory = $false)]
+        $AllowedDigits = '23456789',
+    
+        [Parameter(Mandatory = $false)]
+        $AllowedSpecialChars = '!#$@*?'
+    )
+    $lowerCaseLetters = $null
+    $upperCaseLetters = $null
+    $digits = $null
+    $specialChars = $null
+    
+    # Total length of random password
+    if ($MinimumLength -ne $MaximumLength) {
+        $totalLength = Get-Random -Minimum $MinimumLength -Maximum $MaximumLength
+    }
+    else {
+        $totalLength = $MaximumLength
+    }
+    
+    <#--------- Upper case letters ---------#>
+    # Total length of allowed upper case letters
+    if ($MinimumUpperCaseLetters -and $MaximumUpperCaseLetters) {
+        $amountOfUpperCaseLetters = Get-Random -Minimum $MinimumUpperCaseLetters -Maximum $MaximumUpperCaseLetters
+    }
+    elseif ($MinimumUpperCaseLetters -and !$MaximumUpperCaseLetters) {
+        $amountOfUpperCaseLetters = Get-Random -Minimum $MinimumUpperCaseLetters -maximum ($MinimumUpperCaseLetters + 1)
+    }
+    elseif (!$MinimumUpperCaseLetters -and $MaximumUpperCaseLetters) {
+        $amountOfUpperCaseLetters = Get-Random -Minimum ($MaximumUpperCaseLetters - 1) -Maximum $MaximumUpperCaseLetters
+    }
+    else {
+        $amountOfUpperCaseLetters = 0
+    }
+    
+    # Get random upper case letters
+    if ($amountOfUpperCaseLetters -gt 0) {
+        $random = 1..$amountOfUpperCaseLetters | ForEach-Object { Get-Random -Maximum $AllowedUpperCaseLetters.Length }
+        $upperCaseLetters = ([String]$AllowedUpperCaseLetters[$random]).replace(" ", "")
+    }
+    
+    <#--------- Digits ---------#>
+    # Total length of allowed digits
+    if ($MinimumDigits -and $MaximumDigits) {
+        $amountOfDigits = Get-Random -Minimum $MinimumDigits -Maximum $MaximumDigits
+    }
+    elseif ($MinimumDigits -and !$MaximumDigits) {
+        $amountOfDigits = Get-Random -Minimum $MinimumDigits -maximum ($MinimumDigits + 1)
+    }
+    elseif (!$MinimumDigits -and $MaximumDigits) {
+        $amountOfDigits = Get-Random -Minimum ($MaximumDigits - 1) -Maximum $MaximumDigits
+    }
+    else {
+        $amountOfDigits = 0
+    }
+    
+    # Get random digits
+    if ($amountOfDigits -gt 0) {
+        $random = 1..$amountOfDigits | ForEach-Object { Get-Random -Maximum $AllowedDigits.Length }
+        $digits = ([String]$AllowedDigits[$random]).replace(" ", "")
+    }
+    
+    
+    <#--------- Special Characters ---------#>
+    # Total length of allowed special characters
+    if ($MinimumSpecialChars -and $MaximumSpecialChars) {
+        $amountOfSpecialChars = Get-Random -Minimum $MinimumSpecialChars -Maximum $MaximumSpecialChars
+    }
+    elseif ($MinimumSpecialChars -and !$MaximumSpecialChars) {
+        $amountOfSpecialChars = Get-Random -Minimum $MinimumSpecialChars -maximum ($MinimumSpecialChars + 1)
+    }
+    elseif (!$MinimumSpecialChars -and $MaximumSpecialChars) {
+        $amountOfSpecialChars = Get-Random -Minimum ($MaximumSpecialChars - 1) -Maximum $MaximumSpecialChars
+    }
+    else {
+        $amountOfSpecialChars = 0
+    }
+    
+    # Get random special chars
+    if ($amountOfSpecialChars -gt 0) {
+        $random = 1..$amountOfSpecialChars | ForEach-Object { Get-Random -Maximum $AllowedSpecialChars.Length }
+        $specialChars = ([String]$AllowedSpecialChars[$random]).replace(" ", "")
+    }
+    
+    <#--------- Lower case letters ---------#>
+    # Get random lower case letters
+    $amountOfLowerCaseLetters = ($totalLength - $amountOfUpperCaseLetters - $amountOfDigits - $amountOfSpecialChars)
+    $random = 1..$amountOfLowerCaseLetters | ForEach-Object { Get-Random -Maximum $AllowedLowerCaseLetters.Length }
+    $lowerCaseLetters = ([String]$AllowedLowerCaseLetters[$random]).replace(" ", "")
+    
+    # Join all generated password characters into one string
+    $passwordCharacters = ($lowerCaseLetters + $upperCaseLetters + $digits + $specialChars).replace(" ", "")
+
+    # Define the first character
+    $startingCharacter = "$($lowerCaseLetters.ToCharArray() | Get-Random -Count 1)"
+
+    # Remove the character already in $randomPassword from $passwordCharacters once
+    $passwordCharacters = $passwordCharacters.Remove($passwordCharacters.IndexOf($startingCharacter), 1)
+
+    # Scramble password characters
+    $characterArray = $passwordCharacters.ToCharArray() | Get-Random -Count ($passwordCharacters.Length)
+
+    # Generate the password
+    # Set the starting character
+    $randomPassword = $startingCharacter
+    # Set the remain characters
+    $scrambledStringArray = $characterArray
+    $randomPassword += -join $scrambledStringArray
+
+    # Output the final password
+    return $randomPassword 
+}
+    
+try {
+    $params = @{
+        MinimumLength           = 12
+        MaximumLength           = 12
+        MinimumUpperCaseLetters = 1
+        MaximumUpperCaseLetters = 2
+        MinimumDigits           = 2
+        MaximumDigits           = 3
+        MinimumSpecialChars     = 1
+        MaximumSpecialChars     = 2
+        AllowedUpperCaseLetters = 'ABCDEFGHJKMNPQRSTUVWXYZ'
+        AllowedLowerCaseLetters = 'abcdefghjkmnpqrstuvwxyz'
+        AllowedDigits           = '23456789'
+        AllowedSpecialChars     = '!#$@*?'
+    }
+    
+    $Password = New-GeneratedPassword @params
+
+    $returnObject = @{
+        password = $Password
+    }
+    Write-output $returnObject
+    
+    Write-information "Successfully generated random password"
+}
+catch {
+    Write-error "Error generating random password. Error: $($_.Exception.Message)"
+}
+'@ 
+$tmpModel = @'
+[{"key":"password","type":0}]
+'@ 
+$tmpInput = @'
+[]
+'@ 
+$dataSourceGuid_1 = [PSCustomObject]@{} 
+$dataSourceGuid_1_Name = @'
+entra-id-account-reset-password-unlock | Generate-Random-Password
+'@ 
+Invoke-HelloIDDatasource -DatasourceName $dataSourceGuid_1_Name -DatasourceType "4" -DatasourceInput $tmpInput -DatasourcePsScript $tmpPsScript -DatasourceModel $tmpModel -DataSourceRunInCloud "True" -returnObject ([Ref]$dataSourceGuid_1) 
+<# End: DataSource "entra-id-account-reset-password-unlock | Generate-Random-Password" #>
 <# End: HelloID Data sources #>
 
 <# Begin: Dynamic Form "Entra ID Account - Reset password & Enable" #>
 $tmpSchema = @"
-[{"label":"Select user account","fields":[{"key":"searchfield","templateOptions":{"label":"Search","placeholder":"Username or email address"},"type":"input","summaryVisibility":"Hide element","requiresTemplateOptions":true,"requiresKey":true,"requiresDataSource":false},{"key":"gridUsers","templateOptions":{"label":"Select user","required":true,"grid":{"columns":[{"headerName":"Display Name","field":"DisplayName"},{"headerName":"User Principal Name","field":"UserPrincipalName"},{"headerName":"Enabled","field":"Enabled"},{"headerName":"Title","field":"Title"},{"headerName":"Department","field":"Department"},{"headerName":"Id","field":"Id"}],"height":300,"rowSelection":"single"},"dataSourceConfig":{"dataSourceGuid":"$dataSourceGuid_0","input":{"propertyInputs":[{"propertyName":"searchUser","otherFieldValue":{"otherFieldKey":"searchfield"}}]}},"allowCsvDownload":true},"type":"grid","summaryVisibility":"Show","requiresTemplateOptions":true,"requiresKey":true,"requiresDataSource":true}]},{"label":"Reset password","fields":[{"key":"gridDetails","templateOptions":{"label":"Basic attributes","required":false,"grid":{"columns":[{"headerName":"Name","field":"name"},{"headerName":"Value","field":"value"}],"height":350,"rowSelection":"single"},"dataSourceConfig":{"dataSourceGuid":"$dataSourceGuid_1","input":{"propertyInputs":[{"propertyName":"selectedUser","otherFieldValue":{"otherFieldKey":"gridUsers"}}]}},"useFilter":false,"allowCsvDownload":true},"type":"grid","summaryVisibility":"Hide element","requiresTemplateOptions":true,"requiresKey":true,"requiresDataSource":true},{"key":"blnreset","templateOptions":{"label":"Reset password","useSwitch":true,"checkboxLabel":" "},"type":"boolean","defaultValue":true,"summaryVisibility":"Show","requiresTemplateOptions":true,"requiresKey":true,"requiresDataSource":false},{"key":"password","templateOptions":{"label":"New password","pattern":"^(?=.*[A-Z])(?=.*\\d)(?=.*[^A-Za-z0-9]).{12,}$"},"validation":{"messages":{"pattern":"Password must be at least 12 characters long and include at least 1 uppercase letter, 1 number, and 1 special character."}},"hideExpression":"!model[\"blnreset\"]","type":"passwordconfirm","summaryVisibility":"Hide value","requiresTemplateOptions":true,"requiresKey":true,"requiresDataSource":false},{"key":"blnchangenextsignin","templateOptions":{"label":"Change password at next sign in","useSwitch":true,"checkboxLabel":""},"hideExpression":"!model[\"blnreset\"]","type":"boolean","defaultValue":true,"summaryVisibility":"Show","requiresTemplateOptions":true,"requiresKey":true,"requiresDataSource":false},{"templateOptions":{"title":"The state of the switch below is passed through to the Entra ID user.","titleField":"","bannerType":"Info","useBody":false},"type":"textbanner","summaryVisibility":"Hide element","body":"Text Banner Content","requiresTemplateOptions":false,"requiresKey":false,"requiresDataSource":false},{"key":"blnenable","templateOptions":{"label":"Enable account","useSwitch":true,"checkboxLabel":"","useDataSource":true,"dataSourceConfig":{"dataSourceGuid":"$dataSourceGuid_2","input":{"propertyInputs":[{"propertyName":"selectedUser","otherFieldValue":{"otherFieldKey":"gridUsers"}}]}},"displayField":"enabled"},"type":"boolean","summaryVisibility":"Show","requiresTemplateOptions":true,"requiresKey":true,"requiresDataSource":false}]}]
+[{"label":"Select user account","fields":[{"key":"searchfield","templateOptions":{"label":"Search field (wildcard search in Display name, UserPrincipalName and mail)","placeholder":"Display name, UserPrincipalName, or mail (use * to search all users)","required":true,"minLength":1},"type":"input","summaryVisibility":"Hide element","requiresTemplateOptions":true,"requiresKey":true,"requiresDataSource":false},{"key":"gridUsers","templateOptions":{"label":"Select user","required":true,"grid":{"columns":[{"headerName":"Display Name","field":"displayName"},{"headerName":"User Principal Name","field":"userPrincipalName"},{"headerName":"Mail","field":"mail"},{"headerName":"Description","field":"description"},{"headerName":"Account Enabled","field":"accountEnabled"},{"headerName":"Job Title","field":"jobTitle"},{"headerName":"Department","field":"department"},{"headerName":"Company Name","field":"companyName"}],"height":300,"rowSelection":"single"},"dataSourceConfig":{"dataSourceGuid":"$dataSourceGuid_0","input":{"propertyInputs":[{"propertyName":"searchValue","otherFieldValue":{"otherFieldKey":"searchfield"}}]}},"allowCsvDownload":true},"type":"grid","summaryVisibility":"Show","requiresTemplateOptions":true,"requiresKey":true,"requiresDataSource":true}]},{"label":"Reset password","fields":[{"key":"blnreset","templateOptions":{"label":"Reset password","useSwitch":true,"checkboxLabel":" "},"type":"boolean","defaultValue":true,"summaryVisibility":"Show","requiresTemplateOptions":true,"requiresKey":true,"requiresDataSource":false},{"key":"password","templateOptions":{"label":"Password","useDataSource":true,"dataSourceConfig":{"dataSourceGuid":"$dataSourceGuid_1","input":{"propertyInputs":[]}},"displayField":"password","pattern":"^(?=.*[ABCDEFGHJKMNPQRSTUVWXYZ])(?=.*[abcdefghjkmnpqrstuvwxyz])(?=.*[23456789])(?=.*[!#$@*?])[ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!#$@*?]{12,}$","required":true},"validation":{"messages":{"pattern":"Password validation failed.  \nRequirements:  \n- Minimum length: 12 characters.  \n- At least one uppercase letter from: ABCDEFGHJKMNPQRSTUVWXYZ (excludes I, L, O).  \n- At least one lowercase letter from: abcdefghjkmnpqrstuvwxyz (excludes i, l, o).  \n- At least one digit from: 2 3 4 5 6 7 8 9 (excludes 0 and 1).  \n- At least one special character from: ! # $ @ * ?  "}},"hideExpression":"!model[\"blnreset\"]","type":"input","summaryVisibility":"Show","requiresTemplateOptions":true,"requiresKey":true,"requiresDataSource":false},{"key":"blnchangenextsignin","templateOptions":{"label":"Change password at next sign in","useSwitch":true,"checkboxLabel":""},"hideExpression":"!model[\"blnreset\"]","type":"boolean","defaultValue":true,"summaryVisibility":"Show","requiresTemplateOptions":true,"requiresKey":true,"requiresDataSource":false},{"templateOptions":{"title":"The state of the switch below is passed through to the Entra ID user.","titleField":"","bannerType":"Info","useBody":false},"type":"textbanner","summaryVisibility":"Hide element","body":"Text Banner Content","requiresTemplateOptions":false,"requiresKey":false,"requiresDataSource":false},{"key":"blnenable","templateOptions":{"label":"Enable account","useSwitch":true,"checkboxLabel":"","useDataSource":true,"dataSourceConfig":{"dataSourceGuid":"$dataSourceGuid_2","input":{"propertyInputs":[{"propertyName":"selectedUser","otherFieldValue":{"otherFieldKey":"gridUsers"}}]}},"displayField":"accountEnabled"},"type":"boolean","summaryVisibility":"Show","requiresTemplateOptions":true,"requiresKey":true,"requiresDataSource":false}]}]
 "@ 
 
 $dynamicFormGuid = [PSCustomObject]@{} 
@@ -886,7 +1157,7 @@ $delegatedFormName = @'
 Entra ID Account - Reset password & Unlock
 '@
 $tmpTask = @'
-{"name":"Entra ID Account - Reset password & Unlock","script":"# Set TLS to accept TLS, TLS 1.1 and TLS 1.2\r\n[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls -bor [Net.SecurityProtocolType]::Tls11 -bor [Net.SecurityProtocolType]::Tls12\r\n\r\n$VerbosePreference = \"SilentlyContinue\"\r\n$InformationPreference = \"Continue\"\r\n$WarningPreference = \"Continue\"\r\n\r\n# variables configured in form\r\n$blnchangenextsignin = $form.blnchangenextsignin\r\n$blnenable = $form.blnenable\r\n$blnreset = $form.blnreset\r\n$password = $form.password\r\n$userPrincipalName = $form.gridUsers.UserPrincipalName\r\n$id = $form.gridUsers.Id\r\n$DisplayName = $form.gridUsers.DisplayName\r\n\r\nWrite-Warning \"Reset password: $blnreset\"\r\nWrite-Warning \"Enable account: $blnenable\"\r\nWrite-Warning \"Force Change Password Next SignIn: $blnchangenextsignin\"\r\n\r\n#Change mapping here\r\nif ($blnreset -eq 'true') {\r\n    $account = [PSCustomObject]@{\r\n        id                = $id\r\n        userPrincipalName = $userPrincipalName\r\n        accountEnabled    = $blnenable\r\n        passwordProfile   = @{\r\n            password                      = $password\r\n            forceChangePasswordNextSignIn = $blnchangenextsignin\r\n        }\r\n    }\r\n}\r\nelseif ($blnreset -eq 'false') {   \r\n    $account = [PSCustomObject]@{\r\n        id                = $id\r\n        userPrincipalName = $userPrincipalName\r\n        accountEnabled    = $blnenable\r\n    }\r\n}\r\n\r\nfunction Get-MSEntraAccessToken {\r\n    [CmdletBinding()]\r\n    param(\r\n        [Parameter(Mandatory)]\r\n        $Certificate\r\n    )\r\n    try {\r\n        # Get the DER encoded bytes of the certificate\r\n        $derBytes = $Certificate.RawData\r\n\r\n        # Compute the SHA-256 hash of the DER encoded bytes\r\n        $sha256 = [System.Security.Cryptography.SHA256]::Create()\r\n        $hashBytes = $sha256.ComputeHash($derBytes)\r\n        $base64Thumbprint = [System.Convert]::ToBase64String($hashBytes).Replace('+', '-').Replace('/', '_').Replace('=', '')\r\n\r\n        # Create a JWT (JSON Web Token) header\r\n        $header = @{\r\n            'alg'      = 'RS256'\r\n            'typ'      = 'JWT'\r\n            'x5t#S256' = $base64Thumbprint\r\n        } | ConvertTo-Json\r\n        $base64Header = [System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($header))\r\n\r\n        # Calculate the Unix timestamp (seconds since 1970-01-01T00:00:00Z) for 'exp', 'nbf' and 'iat'\r\n        $currentUnixTimestamp = [math]::Round(((Get-Date).ToUniversalTime() - ([datetime]'1970-01-01T00:00:00Z').ToUniversalTime()).TotalSeconds)\r\n\r\n        # Create a JWT payload\r\n        $payload = [Ordered]@{\r\n            'iss' = \"$entraidappid\"\r\n            'sub' = \"$entraidappid\"\r\n            'aud' = \"https://login.microsoftonline.com/$EntraIdTenantId/oauth2/token\"\r\n            'exp' = ($currentUnixTimestamp + 3600) # Expires in 1 hour\r\n            'nbf' = ($currentUnixTimestamp - 300) # Not before 5 minutes ago\r\n            'iat' = $currentUnixTimestamp\r\n            'jti' = [Guid]::NewGuid().ToString()\r\n        } | ConvertTo-Json\r\n        $base64Payload = [System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($payload)).Replace('+', '-').Replace('/', '_').Replace('=', '')\r\n\r\n        # Extract the private key from the certificate\r\n        $rsaPrivate = $Certificate.PrivateKey\r\n        $rsa = [System.Security.Cryptography.RSACryptoServiceProvider]::new()\r\n        $rsa.ImportParameters($rsaPrivate.ExportParameters($true))\r\n\r\n        # Sign the JWT\r\n        $signatureInput = \"$base64Header.$base64Payload\"\r\n        $signature = $rsa.SignData([Text.Encoding]::UTF8.GetBytes($signatureInput), 'SHA256')\r\n        $base64Signature = [System.Convert]::ToBase64String($signature).Replace('+', '-').Replace('/', '_').Replace('=', '')\r\n\r\n        # Create the JWT token\r\n        $jwtToken = \"$($base64Header).$($base64Payload).$($base64Signature)\"\r\n\r\n        $createEntraAccessTokenBody = @{\r\n            grant_type            = 'client_credentials'\r\n            client_id             = $entraidappid\r\n            client_assertion_type = 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer'\r\n            client_assertion      = $jwtToken\r\n            resource              = 'https://graph.microsoft.com'\r\n        }\r\n\r\n        $createEntraAccessTokenSplatParams = @{\r\n            Uri         = \"https://login.microsoftonline.com/$EntraIdTenantId/oauth2/token\"\r\n            Body        = $createEntraAccessTokenBody\r\n            Method      = 'POST'\r\n            ContentType = 'application/x-www-form-urlencoded'\r\n            Verbose     = $false\r\n            ErrorAction = 'Stop'\r\n        }\r\n\r\n        $createEntraAccessTokenResponse = Invoke-RestMethod @createEntraAccessTokenSplatParams\r\n        Write-Output $createEntraAccessTokenResponse.access_token\r\n    }\r\n    catch {\r\n        $PSCmdlet.ThrowTerminatingError($_)\r\n    }\r\n}\r\n\r\nfunction Get-MSEntraCertificate {\r\n    [CmdletBinding()]\r\n    param()\r\n    try {\r\n        $rawCertificate = [system.convert]::FromBase64String($EntraIdCertificateBase64String)\r\n        $certificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($rawCertificate, $EntraIdCertificatePassword, [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::Exportable)\r\n        Write-Output $certificate\r\n    }\r\n    catch {\r\n        $PSCmdlet.ThrowTerminatingError($_)\r\n    }\r\n}\r\n\r\ntry {\r\n    # Setup Connection with Entra/Exo\r\n    Write-Verbose 'connecting to MS-Entra'\r\n    $certificate = Get-MSEntraCertificate\r\n    $entraToken = Get-MSEntraAccessToken -Certificate $certificate\r\n    \r\n    #Add the authorization header to the request\r\n    $authorization = @{\r\n        Authorization = \"Bearer $entraToken\";\r\n        'Content-Type' = \"application/json\";\r\n        Accept = \"application/json\";\r\n    } \r\n\r\n    Write-Information \"Updating Entra ID user [$($account.userPrincipalName) ($($account.id))]..\"\r\n \r\n    $baseUpdateUri = \"https://graph.microsoft.com/\"\r\n    $updateUri = $baseUpdateUri + \"v1.0/users/$($account.id)\"\r\n    $body = $account | ConvertTo-Json -Depth 10\r\n \r\n \r\n    $response = Invoke-RestMethod -Uri $updateUri -Method PATCH -Headers $authorization -Body $body -Verbose:$false\r\n    \r\n    Write-Information \"Entra ID user [$($account.userPrincipalName) ($($account.id))] updated successfully\"\r\n\r\n    $Log = @{\r\n        Action            = \"UpdateAccount\" # optional. ENUM (undefined = default) \r\n        System            = \"EntraID\" # optional (free format text) \r\n        Message           = \"Entra ID user [$($account.userPrincipalName) ($($account.id))] updated successfully\" # required (free format text) \r\n        IsError           = $false # optional. Elastic reporting purposes only. (default = $false. $true = Executed action returned an error) \r\n        TargetDisplayName = $DisplayName # optional (free format text) \r\n        TargetIdentifier  = $([string]$EntraAppId) # optional (free format text) \r\n    }\r\n    #send result back  \r\n    Write-Information -Tags \"Audit\" -MessageData $log\r\n\r\n}\r\ncatch {\r\n    Write-Error \"Error updating Entra ID user [$($account.userPrincipalName) ($($account.id))]. Error: $_\"\r\n\r\n    $Log = @{\r\n        Action            = \"UpdateAccount\" # optional. ENUM (undefined = default) \r\n        System            = \"EntraID\" # optional (free format text) \r\n        Message           = \"Error updating Entra ID user [$($account.userPrincipalName) ($($account.id))]\" # required (free format text) \r\n        IsError           = $true # optional. Elastic reporting purposes only. (default = $false. $true = Executed action returned an error) \r\n        TargetDisplayName = $DisplayName # optional (free format text) \r\n        TargetIdentifier  = $([string]$EntraAppId) # optional (free format text) \r\n    }\r\n    #send result back  \r\n    Write-Information -Tags \"Audit\" -MessageData $log\r\n    \r\n}","runInCloud":true}
+{"name":"Entra ID Account - Reset password & Unlock","script":"# Variables configured in form\r\n$user = $form.gridUsers\r\n$blnreset = $form.blnreset\r\n$password = $form.password\r\n$blnchangenextsignin = $form.blnchangenextsignin\r\n$blnenable = $form.blnenable\r\n\r\n# Global variables\r\n# Outcommented as these are set from Global Variables\r\n# $EntraIdTenantId = \"\"\r\n# $EntraIdAppId = \"\"\r\n# $EntraIdCertificateBase64String = \"\"\r\n# $EntraIdCertificatePassword = \"\"\r\n\r\n# Enable TLS1.2\r\n[System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor [System.Net.SecurityProtocolType]::Tls12\r\n\r\n# Set debug logging\r\n$VerbosePreference = \"SilentlyContinue\"\r\n$InformationPreference = \"Continue\"\r\n$WarningPreference = \"Continue\"\r\n\r\n#region functions\r\nfunction Resolve-MicrosoftGraphAPIError {\r\n    [CmdletBinding()]\r\n    param (\r\n        [Parameter(Mandatory)]\r\n        [object]\r\n        $ErrorObject\r\n    )\r\n    process {\r\n        $httpErrorObj = [PSCustomObject]@{\r\n            ScriptLineNumber = $ErrorObject.InvocationInfo.ScriptLineNumber\r\n            Line             = $ErrorObject.InvocationInfo.Line\r\n            ErrorDetails     = $ErrorObject.Exception.Message\r\n            FriendlyMessage  = $ErrorObject.Exception.Message\r\n        }\r\n        if (-not [string]::IsNullOrEmpty($ErrorObject.ErrorDetails.Message)) {\r\n            $httpErrorObj.ErrorDetails = $ErrorObject.ErrorDetails.Message\r\n        }\r\n        elseif ($ErrorObject.Exception.GetType().FullName -eq 'System.Net.WebException') {\r\n            if ($null -ne $ErrorObject.Exception.Response) {\r\n                $streamReaderResponse = [System.IO.StreamReader]::new($ErrorObject.Exception.Response.GetResponseStream()).ReadToEnd()\r\n                if (-not [string]::IsNullOrEmpty($streamReaderResponse)) {\r\n                    $httpErrorObj.ErrorDetails = $streamReaderResponse\r\n                }\r\n            }\r\n        }\r\n        try {\r\n            $errorDetailsObject = ($httpErrorObj.ErrorDetails | ConvertFrom-Json -ErrorAction Stop)\r\n            if ($errorDetailsObject.error_description) {\r\n                $httpErrorObj.FriendlyMessage = $errorDetailsObject.error_description\r\n            }\r\n            elseif ($errorDetailsObject.error.message) {\r\n                $httpErrorObj.FriendlyMessage = \"$($errorDetailsObject.error.code): $($errorDetailsObject.error.message)\"\r\n            }\r\n            elseif ($errorDetailsObject.error.details.message) {\r\n                $httpErrorObj.FriendlyMessage = \"$($errorDetailsObject.error.details.code): $($errorDetailsObject.error.details.message)\"\r\n            }\r\n            else {\r\n                $httpErrorObj.FriendlyMessage = $httpErrorObj.ErrorDetails\r\n            }\r\n        }\r\n        catch {\r\n            $httpErrorObj.FriendlyMessage = $httpErrorObj.ErrorDetails\r\n        }\r\n        Write-Output $httpErrorObj\r\n    }\r\n}\r\n\r\nfunction Get-MSEntraAccessToken {\r\n    [CmdletBinding()]\r\n    param(\r\n        [Parameter(Mandatory)]\r\n        [ValidateNotNull()]\r\n        $Certificate,\r\n        \r\n        [Parameter(Mandatory)]\r\n        [ValidateNotNullOrEmpty()]\r\n        [string]\r\n        $AppId,\r\n        \r\n        [Parameter(Mandatory)]\r\n        [ValidateNotNullOrEmpty()]\r\n        [string]\r\n        $TenantId\r\n    )\r\n    try {\r\n        # Get the DER encoded bytes of the certificate\r\n        $derBytes = $Certificate.RawData\r\n\r\n        # Compute the SHA-256 hash of the DER encoded bytes\r\n        $sha256 = [System.Security.Cryptography.SHA256]::Create()\r\n        $hashBytes = $sha256.ComputeHash($derBytes)\r\n        $base64Thumbprint = [System.Convert]::ToBase64String($hashBytes).Replace('+', '-').Replace('/', '_').Replace('=', '')\r\n\r\n        # Create a JWT (JSON Web Token) header\r\n        $header = @{\r\n            'alg'      = 'RS256'\r\n            'typ'      = 'JWT'\r\n            'x5t#S256' = $base64Thumbprint\r\n        } | ConvertTo-Json\r\n        $base64Header = [System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($header))\r\n\r\n        # Calculate the Unix timestamp (seconds since 1970-01-01T00:00:00Z) for 'exp', 'nbf' and 'iat'\r\n        $currentUnixTimestamp = [math]::Round(((Get-Date).ToUniversalTime() - ([datetime]'1970-01-01T00:00:00Z').ToUniversalTime()).TotalSeconds)\r\n\r\n        # Create a JWT payload\r\n        $payload = [Ordered]@{\r\n            'iss' = \"$($AppId)\"\r\n            'sub' = \"$($AppId)\"\r\n            'aud' = \"https://login.microsoftonline.com/$($TenantId)/oauth2/token\"\r\n            'exp' = ($currentUnixTimestamp + 3600) # Expires in 1 hour\r\n            'nbf' = ($currentUnixTimestamp - 300) # Not before 5 minutes ago\r\n            'iat' = $currentUnixTimestamp\r\n            'jti' = [Guid]::NewGuid().ToString()\r\n        } | ConvertTo-Json\r\n        $base64Payload = [System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($payload)).Replace('+', '-').Replace('/', '_').Replace('=', '')\r\n\r\n        # Extract the private key from the certificate\r\n        $rsaPrivate = $Certificate.PrivateKey\r\n        $rsa = [System.Security.Cryptography.RSACryptoServiceProvider]::new()\r\n        $rsa.ImportParameters($rsaPrivate.ExportParameters($true))\r\n\r\n        # Sign the JWT\r\n        $signatureInput = \"$base64Header.$base64Payload\"\r\n        $signature = $rsa.SignData([Text.Encoding]::UTF8.GetBytes($signatureInput), 'SHA256')\r\n        $base64Signature = [System.Convert]::ToBase64String($signature).Replace('+', '-').Replace('/', '_').Replace('=', '')\r\n\r\n        # Create the JWT token\r\n        $jwtToken = \"$($base64Header).$($base64Payload).$($base64Signature)\"\r\n\r\n        $createEntraAccessTokenBody = @{\r\n            grant_type            = 'client_credentials'\r\n            client_id             = $AppId\r\n            client_assertion_type = 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer'\r\n            client_assertion      = $jwtToken\r\n            resource              = 'https://graph.microsoft.com'\r\n        }\r\n\r\n        $createEntraAccessTokenSplatParams = @{\r\n            Uri         = \"https://login.microsoftonline.com/$($TenantId)/oauth2/token\"\r\n            Body        = $createEntraAccessTokenBody\r\n            Method      = 'POST'\r\n            ContentType = 'application/x-www-form-urlencoded'\r\n            Verbose     = $false\r\n            ErrorAction = 'Stop'\r\n        }\r\n\r\n        $createEntraAccessTokenResponse = Invoke-RestMethod @createEntraAccessTokenSplatParams\r\n        Write-Output $createEntraAccessTokenResponse.access_token\r\n    }\r\n    catch {\r\n        $PSCmdlet.ThrowTerminatingError($_)\r\n    }\r\n}\r\n\r\nfunction Get-MSEntraCertificate {\r\n    [CmdletBinding()]\r\n    param(\r\n        [Parameter(Mandatory)]\r\n        [ValidateNotNullOrEmpty()]\r\n        [string]\r\n        $CertificateBase64String,\r\n        \r\n        [Parameter(Mandatory)]\r\n        [ValidateNotNullOrEmpty()]\r\n        [string]\r\n        $CertificatePassword\r\n    )\r\n    try {\r\n        $rawCertificate = [system.convert]::FromBase64String($CertificateBase64String)\r\n        $certificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($rawCertificate, $CertificatePassword, [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::Exportable)\r\n        Write-Output $certificate\r\n    }\r\n    catch {\r\n        $PSCmdlet.ThrowTerminatingError($_)\r\n    }\r\n}\r\n#endregion functions\r\n\r\ntry {\r\n    # Convert base64 certificate string to certificate object\r\n    $actionMessage = \"converting base64 certificate string to certificate object\"\r\n    $certificate = Get-MSEntraCertificate -CertificateBase64String $EntraIdCertificateBase64String -CertificatePassword $EntraIdCertificatePassword\r\n\r\n    # Create access token\r\n    $actionMessage = \"creating access token\"\r\n    $entraToken = Get-MSEntraAccessToken -Certificate $certificate -AppId $EntraIdAppId -TenantId $EntraIdTenantId\r\n\r\n    # Create headers\r\n    $actionMessage = \"creating headers\"\r\n    $headers = @{\r\n        \"Authorization\"    = \"Bearer $($entraToken)\"\r\n        \"Accept\"           = \"application/json\"\r\n        \"Content-Type\"     = \"application/json\"\r\n        \"ConsistencyLevel\" = \"eventual\" # Needed to filter on specific attributes (https://docs.microsoft.com/en-us/graph/aad-advanced-queries)\r\n    }\r\n\r\n    # Update user\r\n    # API docs: https://learn.microsoft.com/en-us/graph/api/user-update?view=graph-rest-1.0&tabs=http\r\n    $actionMessage = \"updating user [$($user.displayName)] with id [$($user.id)]. Reset password: [$blnreset], Change password at next signin: [$blnchangenextsignin], Account enabled: [$blnenable]\"\r\n\r\n    if ($blnreset -eq 'true') {\r\n        $updateUserBody = @{\r\n            id                = $user.id\r\n            accountEnabled    = $blnenable\r\n            passwordProfile   = @{\r\n                password                      = $password\r\n                forceChangePasswordNextSignIn = $blnchangenextsignin\r\n            }\r\n        }\r\n    }\r\n    elseif ($blnreset -eq 'false') {   \r\n        $updateUserBody = @{\r\n            id                = $user.id\r\n            accountEnabled    = $blnenable\r\n        }\r\n    }\r\n\r\n    $updateUserSplatParams = @{\r\n        Uri         = \"https://graph.microsoft.com/v1.0/users/$($user.id)\"\r\n        Headers     = $headers\r\n        Method      = \"PATCH\"\r\n        Body        = ($updateUserBody | ConvertTo-Json -Depth 10)\r\n        Verbose     = $false\r\n        ErrorAction = \"Stop\"\r\n    }\r\n    $updateUserResponse = Invoke-RestMethod @updateUserSplatParams\r\n\r\n    $Log = @{\r\n        Action            = \"UpdateAccount\" # optional. ENUM (undefined = default) \r\n        System            = \"EntraID\" # optional (free format text) \r\n        Message           = \"Updated user [$($user.displayName)] with id [$($user.id)]. Reset password: [$blnreset], Change password at next signin: [$blnchangenextsignin], Account enabled: [$blnenable]\" # required (free format text) \r\n        IsError           = $false # optional. Elastic reporting purposes only. (default = $false. $true = Executed action returned an error) \r\n        TargetDisplayName = $user.displayName # optional (free format text)\r\n        TargetIdentifier  = $user.id # optional (free format text)\r\n    }\r\n    #send result back  \r\n    Write-Information -Tags \"Audit\" -MessageData $log\r\n\r\n}\r\ncatch {\r\n    $ex = $PSItem\r\n    if ($($ex.Exception.GetType().FullName -eq 'Microsoft.PowerShell.Commands.HttpResponseException') -or\r\n        $($ex.Exception.GetType().FullName -eq 'System.Net.WebException')) {\r\n        $errorObj = Resolve-MicrosoftGraphAPIError -ErrorObject $ex\r\n        $auditMessage = \"Error $($actionMessage). Error: $($errorObj.FriendlyMessage)\"\r\n        $warningMessage = \"Error at Line [$($errorObj.ScriptLineNumber)]: $($errorObj.Line). Error: $($errorObj.ErrorDetails)\"\r\n    }\r\n    else {\r\n        $auditMessage = \"Error $($actionMessage). Error: $($ex.Exception.Message)\"\r\n        $warningMessage = \"Error at Line [$($ex.InvocationInfo.ScriptLineNumber)]: $($ex.InvocationInfo.Line). Error: $($ex.Exception.Message)\"\r\n    }\r\n\r\n    $Log = @{\r\n        Action            = \"UpdateAccount\" # optional. ENUM (undefined = default) \r\n        System            = \"EntraID\" # optional (free format text)\r\n        Message           = $auditMessage # required (free format text) \r\n        IsError           = $true # optional. Elastic reporting purposes only. (default = $false. $true = Executed action returned an error) \r\n        TargetDisplayName = $user.displayName # optional (free format text)\r\n        TargetIdentifier  = $user.id # optional (free format text)\r\n    }\r\n    Write-Information -Tags \"Audit\" -MessageData $log\r\n    Write-Warning $warningMessage\r\n    Write-Error $auditMessage\r\n}","runInCloud":true}
 '@ 
 
 Invoke-HelloIDDelegatedForm -DelegatedFormName $delegatedFormName -DynamicFormGuid $dynamicFormGuid -AccessGroups $delegatedFormAccessGroupGuids -Categories $delegatedFormCategoryGuids -UseFaIcon "True" -FaIcon "fa fa-key" -task $tmpTask -returnObject ([Ref]$delegatedFormRef) 

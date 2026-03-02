@@ -5,8 +5,10 @@
       {
         "key": "searchfield",
         "templateOptions": {
-          "label": "Search",
-          "placeholder": "Username or email address"
+          "label": "Search field (wildcard search in Display name, UserPrincipalName and mail)",
+          "placeholder": "Display name, UserPrincipalName, or mail (use * to search all users)",
+          "required": true,
+          "minLength": 1
         },
         "type": "input",
         "summaryVisibility": "Hide element",
@@ -23,27 +25,35 @@
             "columns": [
               {
                 "headerName": "Display Name",
-                "field": "DisplayName"
+                "field": "displayName"
               },
               {
                 "headerName": "User Principal Name",
-                "field": "UserPrincipalName"
+                "field": "userPrincipalName"
               },
               {
-                "headerName": "Enabled",
-                "field": "Enabled"
+                "headerName": "Mail",
+                "field": "mail"
               },
               {
-                "headerName": "Title",
-                "field": "Title"
+                "headerName": "Description",
+                "field": "description"
+              },
+              {
+                "headerName": "Account Enabled",
+                "field": "accountEnabled"
+              },
+              {
+                "headerName": "Job Title",
+                "field": "jobTitle"
               },
               {
                 "headerName": "Department",
-                "field": "Department"
+                "field": "department"
               },
               {
-                "headerName": "Id",
-                "field": "Id"
+                "headerName": "Company Name",
+                "field": "companyName"
               }
             ],
             "height": 300,
@@ -54,7 +64,7 @@
             "input": {
               "propertyInputs": [
                 {
-                  "propertyName": "searchUser",
+                  "propertyName": "searchValue",
                   "otherFieldValue": {
                     "otherFieldKey": "searchfield"
                   }
@@ -76,47 +86,6 @@
     "label": "Reset password",
     "fields": [
       {
-        "key": "gridDetails",
-        "templateOptions": {
-          "label": "Basic attributes",
-          "required": false,
-          "grid": {
-            "columns": [
-              {
-                "headerName": "Name",
-                "field": "name"
-              },
-              {
-                "headerName": "Value",
-                "field": "value"
-              }
-            ],
-            "height": 350,
-            "rowSelection": "single"
-          },
-          "dataSourceConfig": {
-            "dataSourceGuid": "$dataSourceGuid_1",
-            "input": {
-              "propertyInputs": [
-                {
-                  "propertyName": "selectedUser",
-                  "otherFieldValue": {
-                    "otherFieldKey": "gridUsers"
-                  }
-                }
-              ]
-            }
-          },
-          "useFilter": false,
-          "allowCsvDownload": true
-        },
-        "type": "grid",
-        "summaryVisibility": "Hide element",
-        "requiresTemplateOptions": true,
-        "requiresKey": true,
-        "requiresDataSource": true
-      },
-      {
         "key": "blnreset",
         "templateOptions": {
           "label": "Reset password",
@@ -133,17 +102,26 @@
       {
         "key": "password",
         "templateOptions": {
-          "label": "New password",
-          "pattern": "^(?=.*[A-Z])(?=.*\\d)(?=.*[^A-Za-z0-9]).{12,}$"
+          "label": "Password",
+          "useDataSource": true,
+          "dataSourceConfig": {
+            "dataSourceGuid": "$dataSourceGuid_1",
+            "input": {
+              "propertyInputs": []
+            }
+          },
+          "displayField": "password",
+          "pattern": "^(?=.*[ABCDEFGHJKMNPQRSTUVWXYZ])(?=.*[abcdefghjkmnpqrstuvwxyz])(?=.*[23456789])(?=.*[!#$@*?])[ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!#$@*?]{12,}$",
+          "required": true
         },
         "validation": {
           "messages": {
-            "pattern": "Password must be at least 12 characters long and include at least 1 uppercase letter, 1 number, and 1 special character."
+            "pattern": "Password validation failed.  \nRequirements:  \n- Minimum length: 12 characters.  \n- At least one uppercase letter from: ABCDEFGHJKMNPQRSTUVWXYZ (excludes I, L, O).  \n- At least one lowercase letter from: abcdefghjkmnpqrstuvwxyz (excludes i, l, o).  \n- At least one digit from: 2 3 4 5 6 7 8 9 (excludes 0 and 1).  \n- At least one special character from: ! # $ @ * ?  "
           }
         },
         "hideExpression": "!model[\"blnreset\"]",
-        "type": "passwordconfirm",
-        "summaryVisibility": "Hide value",
+        "type": "input",
+        "summaryVisibility": "Show",
         "requiresTemplateOptions": true,
         "requiresKey": true,
         "requiresDataSource": false
@@ -197,7 +175,7 @@
               ]
             }
           },
-          "displayField": "enabled"
+          "displayField": "accountEnabled"
         },
         "type": "boolean",
         "summaryVisibility": "Show",
