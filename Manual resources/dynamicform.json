@@ -1,170 +1,188 @@
 [
-    {
-        "label":  "Select user account",
-        "fields":  [
-                       {
-                           "key":  "searchfield",
-                           "templateOptions":  {
-                                                   "label":  "Search",
-                                                   "placeholder":  "Username or email address"
-                                               },
-                           "type":  "input",
-                           "summaryVisibility":  "Hide element",
-                           "requiresTemplateOptions":  true,
-                           "requiresKey":  true,
-                           "requiresDataSource":  false
-                       },
-                       {
-                           "key":  "gridUsers",
-                           "templateOptions":  {
-                                                   "label":  "Select user",
-                                                   "required":  true,
-                                                   "grid":  {
-                                                                "columns":  [
-                                                                                {
-                                                                                    "headerName":  "Display Name",
-                                                                                    "field":  "DisplayName"
-                                                                                },
-                                                                                {
-                                                                                    "headerName":  "User Principal Name",
-                                                                                    "field":  "UserPrincipalName"
-                                                                                },
-                                                                                {
-                                                                                    "headerName":  "Title",
-                                                                                    "field":  "Title"
-                                                                                },
-                                                                                {
-                                                                                    "headerName":  "Department",
-                                                                                    "field":  "Department"
-                                                                                },
-                                                                                {
-                                                                                    "headerName":  "Company",
-                                                                                    "field":  "Company"
-                                                                                }
-                                                                            ],
-                                                                "height":  300,
-                                                                "rowSelection":  "single"
-                                                            },
-                                                   "dataSourceConfig":  {
-                                                                            "dataSourceGuid":  "$dataSourceGuid_0",
-                                                                            "input":  {
-                                                                                          "propertyInputs":  [
-                                                                                                                 {
-                                                                                                                     "propertyName":  "searchUser",
-                                                                                                                     "otherFieldValue":  {
-                                                                                                                                             "otherFieldKey":  "searchfield"
-                                                                                                                                         }
-                                                                                                                 }
-                                                                                                             ]
-                                                                                      }
-                                                                        }
-                                               },
-                           "type":  "grid",
-                           "summaryVisibility":  "Show",
-                           "requiresTemplateOptions":  true,
-                           "requiresKey":  true,
-                           "requiresDataSource":  true
-                       }
-                   ]
-    },
-    {
-        "label":  "Reset password",
-        "fields":  [
-                       {
-                           "key":  "gridDetails",
-                           "templateOptions":  {
-                                                   "label":  "Basic attributes",
-                                                   "required":  false,
-                                                   "grid":  {
-                                                                "columns":  [
-                                                                                {
-                                                                                    "headerName":  "Name",
-                                                                                    "field":  "name"
-                                                                                },
-                                                                                {
-                                                                                    "headerName":  "Value",
-                                                                                    "field":  "value"
-                                                                                }
-                                                                            ],
-                                                                "height":  350,
-                                                                "rowSelection":  "single"
-                                                            },
-                                                   "dataSourceConfig":  {
-                                                                            "dataSourceGuid":  "$dataSourceGuid_1",
-                                                                            "input":  {
-                                                                                          "propertyInputs":  [
-                                                                                                                 {
-                                                                                                                     "propertyName":  "selectedUser",
-                                                                                                                     "otherFieldValue":  {
-                                                                                                                                             "otherFieldKey":  "gridUsers"
-                                                                                                                                         }
-                                                                                                                 }
-                                                                                                             ]
-                                                                                      }
-                                                                        },
-                                                   "useFilter":  false
-                                               },
-                           "type":  "grid",
-                           "summaryVisibility":  "Hide element",
-                           "requiresTemplateOptions":  true,
-                           "requiresKey":  true,
-                           "requiresDataSource":  true
-                       },
-                       {
-                           "key":  "blnreset",
-                           "templateOptions":  {
-                                                   "label":  "Reset password",
-                                                   "useSwitch":  true,
-                                                   "checkboxLabel":  " "
-                                               },
-                           "type":  "boolean",
-                           "defaultValue":  true,
-                           "summaryVisibility":  "Show",
-                           "requiresTemplateOptions":  true,
-                           "requiresKey":  true,
-                           "requiresDataSource":  false
-                       },
-                       {
-                           "key":  "password",
-                           "templateOptions":  {
-                                                   "label":  "New password"
-                                               },
-                           "hideExpression":  "!model[\"blnreset\"]",
-                           "type":  "passwordconfirm",
-                           "summaryVisibility":  "Hide value",
-                           "requiresTemplateOptions":  true,
-                           "requiresKey":  true,
-                           "requiresDataSource":  false
-                       },
-                       {
-                           "key":  "blnchangenextsignin",
-                           "templateOptions":  {
-                                                   "label":  "Change password at next sign in",
-                                                   "useSwitch":  true,
-                                                   "checkboxLabel":  ""
-                                               },
-                           "hideExpression":  "!model[\"blnreset\"]",
-                           "type":  "boolean",
-                           "defaultValue":  true,
-                           "summaryVisibility":  "Show",
-                           "requiresTemplateOptions":  true,
-                           "requiresKey":  true,
-                           "requiresDataSource":  false
-                       },
-                       {
-                           "key":  "blnenable",
-                           "templateOptions":  {
-                                                   "label":  "Enable account",
-                                                   "useSwitch":  true,
-                                                   "checkboxLabel":  ""
-                                               },
-                           "type":  "boolean",
-                           "defaultValue":  true,
-                           "summaryVisibility":  "Show",
-                           "requiresTemplateOptions":  true,
-                           "requiresKey":  true,
-                           "requiresDataSource":  false
-                       }
-                   ]
-    }
+  {
+    "label": "Select user account",
+    "fields": [
+      {
+        "key": "searchfield",
+        "templateOptions": {
+          "label": "Search field (wildcard search in Display name, UserPrincipalName and mail)",
+          "placeholder": "Display name, UserPrincipalName, or mail (use * to search all users)",
+          "required": true,
+          "minLength": 1
+        },
+        "type": "input",
+        "summaryVisibility": "Hide element",
+        "requiresTemplateOptions": true,
+        "requiresKey": true,
+        "requiresDataSource": false
+      },
+      {
+        "key": "gridUsers",
+        "templateOptions": {
+          "label": "Select user",
+          "required": true,
+          "grid": {
+            "columns": [
+              {
+                "headerName": "Display Name",
+                "field": "displayName"
+              },
+              {
+                "headerName": "User Principal Name",
+                "field": "userPrincipalName"
+              },
+              {
+                "headerName": "Mail",
+                "field": "mail"
+              },
+              {
+                "headerName": "Description",
+                "field": "description"
+              },
+              {
+                "headerName": "Account Enabled",
+                "field": "accountEnabled"
+              },
+              {
+                "headerName": "Job Title",
+                "field": "jobTitle"
+              },
+              {
+                "headerName": "Department",
+                "field": "department"
+              },
+              {
+                "headerName": "Company Name",
+                "field": "companyName"
+              }
+            ],
+            "height": 300,
+            "rowSelection": "single"
+          },
+          "dataSourceConfig": {
+            "dataSourceGuid": "$dataSourceGuid_0",
+            "input": {
+              "propertyInputs": [
+                {
+                  "propertyName": "searchValue",
+                  "otherFieldValue": {
+                    "otherFieldKey": "searchfield"
+                  }
+                }
+              ]
+            }
+          },
+          "allowCsvDownload": true
+        },
+        "type": "grid",
+        "summaryVisibility": "Show",
+        "requiresTemplateOptions": true,
+        "requiresKey": true,
+        "requiresDataSource": true
+      }
+    ]
+  },
+  {
+    "label": "Reset password",
+    "fields": [
+      {
+        "key": "blnreset",
+        "templateOptions": {
+          "label": "Reset password",
+          "useSwitch": true,
+          "checkboxLabel": " "
+        },
+        "type": "boolean",
+        "defaultValue": true,
+        "summaryVisibility": "Show",
+        "requiresTemplateOptions": true,
+        "requiresKey": true,
+        "requiresDataSource": false
+      },
+      {
+        "key": "password",
+        "templateOptions": {
+          "label": "Password",
+          "useDataSource": true,
+          "dataSourceConfig": {
+            "dataSourceGuid": "$dataSourceGuid_1",
+            "input": {
+              "propertyInputs": []
+            }
+          },
+          "displayField": "password",
+          "pattern": "^(?=.*[ABCDEFGHJKMNPQRSTUVWXYZ])(?=.*[abcdefghjkmnpqrstuvwxyz])(?=.*[23456789])(?=.*[!#$@*?])[ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!#$@*?]{12,}$",
+          "required": true
+        },
+        "validation": {
+          "messages": {
+            "pattern": "Password validation failed.  \nRequirements:  \n- Minimum length: 12 characters.  \n- At least one uppercase letter from: ABCDEFGHJKMNPQRSTUVWXYZ (excludes I, L, O).  \n- At least one lowercase letter from: abcdefghjkmnpqrstuvwxyz (excludes i, l, o).  \n- At least one digit from: 2 3 4 5 6 7 8 9 (excludes 0 and 1).  \n- At least one special character from: ! # $ @ * ?  "
+          }
+        },
+        "hideExpression": "!model[\"blnreset\"]",
+        "type": "input",
+        "summaryVisibility": "Show",
+        "requiresTemplateOptions": true,
+        "requiresKey": true,
+        "requiresDataSource": false
+      },
+      {
+        "key": "blnchangenextsignin",
+        "templateOptions": {
+          "label": "Change password at next sign in",
+          "useSwitch": true,
+          "checkboxLabel": ""
+        },
+        "hideExpression": "!model[\"blnreset\"]",
+        "type": "boolean",
+        "defaultValue": true,
+        "summaryVisibility": "Show",
+        "requiresTemplateOptions": true,
+        "requiresKey": true,
+        "requiresDataSource": false
+      },
+      {
+        "templateOptions": {
+          "title": "The state of the switch below is passed through to the Entra ID user.",
+          "titleField": "",
+          "bannerType": "Info",
+          "useBody": false
+        },
+        "type": "textbanner",
+        "summaryVisibility": "Hide element",
+        "body": "Text Banner Content",
+        "requiresTemplateOptions": false,
+        "requiresKey": false,
+        "requiresDataSource": false
+      },
+      {
+        "key": "blnenable",
+        "templateOptions": {
+          "label": "Enable account",
+          "useSwitch": true,
+          "checkboxLabel": "",
+          "useDataSource": true,
+          "dataSourceConfig": {
+            "dataSourceGuid": "$dataSourceGuid_2",
+            "input": {
+              "propertyInputs": [
+                {
+                  "propertyName": "selectedUser",
+                  "otherFieldValue": {
+                    "otherFieldKey": "gridUsers"
+                  }
+                }
+              ]
+            }
+          },
+          "displayField": "accountEnabled"
+        },
+        "type": "boolean",
+        "summaryVisibility": "Show",
+        "requiresTemplateOptions": true,
+        "requiresKey": true,
+        "requiresDataSource": false
+      }
+    ]
+  }
 ]
