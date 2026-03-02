@@ -354,7 +354,7 @@ if ($searchValue -eq "*") {
     $filter = "`$filter=displayName ne null" # Get all users
 }
 else {
-    $filter = "`$search=`"displayName:$searchValue`" OR `"userPrincipalName:$searchValue`" OR `"mail:$searchValue`"&`$filter=accountEnabled eq false"
+    $filter = "`$search=`"displayName:$searchValue`" OR `"userPrincipalName:$searchValue`" OR `"mail:$searchValue`""
 }
 
 # Global variables
