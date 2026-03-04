@@ -35,7 +35,8 @@ Once you have completed the Microsoft setup and followed their best practices, c
 
 - **API Permissions** (Application permissions):
   - `User.Read.All` - To search and read user information
-  - `User.ReadWrite.All` - To reset passwords and enable user accounts
+  - `User.PasswordProfile.ReadWrite.All` - To reset user passwords
+  - `User.EnableDisableAccount.All` - To enable user accounts (if using this feature)
 - **Certificate Base64 encoded string:**
   - Base64 encoded string of the certificate assigned to the app registration. For instructions on creating the certificate and obtaining the base64 string, refer to our forum post: [Setting up a certificate for Microsoft Graph API in HelloID connectors](https://forum.helloid.com/forum/helloid-provisioning/5338-instruction-setting-up-a-certificate-for-microsoft-graph-api-in-helloid-connectors#post5338)
 

@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file. The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.0.1] - 2026-03-04
+
+### Fixed
+
+• Fixed README.md API permissions documentation to specify least privileged permissions required:
+  - Changed from `User.ReadWrite.All` (overly broad permission) to `User.PasswordProfile.ReadWrite.All` (for password reset) and `User.EnableDisableAccount.All` (for enabling/disabling accounts)
+  - This follows Microsoft's principle of least privilege as documented in the official Graph API documentation
+
 ## [2.0.0] - 2026-03-02
 
 This is the first official release of HelloID-Conn-SA-Full-EntraID-AccountPasswordResetEnable. This release includes functionality to reset passwords and/or enable Entra ID user accounts through HelloID Service Automation delegated forms.
